@@ -14,12 +14,14 @@ dependencies = [
     # v2 renamed FastMCP to MCPServer; do not use the v1 import path.
     "mcp[cli]==2.3.0",
     "uvicorn>=0.30",
+    # worker.py uses httpx at runtime (MCP client + model calls), so it
+    # is a main dependency, not dev-only (AUDIT-M2 W5).
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "httpx>=0.27",
 ]
 
 [project.scripts]

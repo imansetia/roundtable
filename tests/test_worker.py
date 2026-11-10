@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import signal
 import socket
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -255,6 +257,25 @@ def drive(config: WorkerConfig) -> str:
     return asyncio.run(_run())
 
 
+def drive_many(config: WorkerConfig, n: int, sleeps: list[float] | None = None) -> list[str]:
+    """Run ``n`` poll cycles on ONE worker instance (cool-down, failure
+    counts and the hourly cap are per-process state, so a fresh instance
+    per cycle would never see them). ``sleeps[i]`` is slept after cycle i.
+    """
+    sleeps = sleeps or []
+
+    async def _run():
+        async with RoundtableWorker(config) as w:
+            out = []
+            for i in range(n):
+                out.append(await w.run_once())
+                if i < len(sleeps):
+                    await asyncio.sleep(sleeps[i])
+            return out
+
+    return asyncio.run(_run())
+
+
 # -- Skill matching, submit, release --------------------------------------
 
 def test_claims_only_tasks_matching_its_skill(server, fake):
@@ -385,7 +406,145 @@ def test_worker_exits_nonzero_without_config(tmp_path):
     assert "ROUNDTABLE_TOKEN" in proc.stderr
 
 
-# -- Ctrl+C and key secrecy (subprocess: real signals, real logs) ----------
+# -- AUDIT-M2: W1 — the cap must count every model call --------------------
+
+def test_cap_counts_every_model_call_not_only_submits(server, fake):
+    """A task whose answer is always too long must not burn quota: the
+    first failed attempt already uses up a max=1 hourly cap."""
+    url = server["url"]
+    fake.answer = "x" * 25_000  # always over the 20,000-char result cap
+    cfg = worker_config(url, fake.url, WORKER_MAX_TASKS_PER_HOUR="1")
+    task = make_task(url, "Always too long", required_skill="python")
+    assert drive_many(cfg, 2) == ["released", "capped"]  # no second paid model call
+    assert len(fake.requests) == 1
+    back = get_task(url, task["id"])
+    assert back["status"] == "open" and back["assignee"] is None
+
+
+def test_failed_task_cools_down_then_retries(server, fake):
+    url = server["url"]
+    fake.mode = "error500"
+    cfg = worker_config(url, fake.url, WORKER_COOLDOWN_SECONDS="0.2")
+    task = make_task(url, "Flaky task", required_skill="python")
+    # Released, then in cool-down (nothing to do), then retried after it.
+    assert drive_many(cfg, 3, sleeps=[0, 0.3]) == ["released", "none", "released"]
+    assert len(fake.requests) == 2
+    back = get_task(url, task["id"])
+    assert back["status"] == "open" and back["assignee"] is None
+
+
+def test_three_failures_posts_help_request_and_stops_retrying(server, fake):
+    url = server["url"]
+    fake.mode = "error500"
+    cfg = worker_config(
+        url, fake.url, WORKER_COOLDOWN_SECONDS="0.2", WORKER_MAX_FAILURES="3"
+    )
+    task = make_task(url, "Always failing task", required_skill="python")
+    assert drive_many(cfg, 4, sleeps=[0.3, 0.3, 0.3]) == [
+        "released",
+        "released",
+        "released",
+        "none",
+    ]
+    assert len(fake.requests) == 3
+    done = get_task(url, task["id"])
+    assert done["status"] == "open" and done["assignee"] is None
+    helps = [m for m in done["messages"] if m["kind"] == "help_request"]
+    assert len(helps) == 1
+    assert "3" in helps[0]["body"]
+    assert FAKE_KEY not in helps[0]["body"]
+    assert "x" * 100 not in helps[0]["body"]  # no model output in it
+
+
+# -- AUDIT-M2: W2 — a crashed worker must not leave its task claimed ------
+
+def test_startup_releases_tasks_claimed_before_a_crash(server, fake, caplog):
+    url = server["url"]
+    task = make_task(url, "Crashed task", required_skill="python")
+    err, _ = call(url, WORKER_TOKEN, "claim_task", {"task_id": task["id"]})
+    assert not err
+    assert get_task(url, task["id"])["status"] == "claimed"
+    cfg = worker_config(url, fake.url)
+
+    async def _connect():
+        async with RoundtableWorker(cfg) as w:
+            return w.name
+
+    with caplog.at_level(logging.INFO, logger="roundtable.worker"):
+        assert asyncio.run(_connect()) == "deepseek"
+    back = get_task(url, task["id"])
+    assert back["status"] == "open" and back["assignee"] is None
+    assert str(task["id"]) in caplog.text
+
+
+# -- AUDIT-M2: W3 — matching tasks must not be starved by paging ----------
+
+def test_pages_past_non_matching_tasks(tmp_path, fake):
+    port = free_port()
+    proc, url, _ = start_server(tmp_path, port, rate_limit=1000)
+    try:
+        for i in range(55):  # more than one page of non-matching tasks
+            make_task(url, f"Rust task {i}", required_skill="rust")
+        target = make_task(url, "Python target", required_skill="python")
+        cfg = worker_config(url, fake.url)
+        assert drive(cfg) == "submitted"
+        assert get_task(url, target["id"])["status"] == "submitted"
+    finally:
+        stop_server(proc)
+
+
+# -- AUDIT-M2: W4 — secrets must not travel over plain HTTP ----------------
+
+def test_config_rejects_plain_http_to_non_loopback():
+    base = {
+        "ROUNDTABLE_TOKEN": "x" * 32,
+        "WORKER_MODEL_BASE_URL": "https://api.example.com/v1",
+        "WORKER_MODEL_NAME": "m",
+        "WORKER_API_KEY": "k",
+    }
+    # https anywhere is fine, http loopback is fine.
+    WorkerConfig.from_env({**base, "ROUNDTABLE_URL": "https://board.example.com/mcp"})
+    for ok_url in (
+        "http://127.0.0.1:8000/mcp",
+        "http://localhost:8000/mcp",
+        "http://[::1]:8000/mcp",
+    ):
+        WorkerConfig.from_env({**base, "ROUNDTABLE_URL": ok_url})
+    # http to a non-loopback host must fail fast, naming the variable.
+    with pytest.raises(WorkerError, match="ROUNDTABLE_URL"):
+        WorkerConfig.from_env({**base, "ROUNDTABLE_URL": "http://192.168.1.1:8000/mcp"})
+    with pytest.raises(WorkerError, match="WORKER_MODEL_BASE_URL"):
+        WorkerConfig.from_env({**base, "WORKER_MODEL_BASE_URL": "http://api.example.com/v1"})
+    with pytest.raises(WorkerError, match="WORKER_MODEL_BASE_URL"):
+        WorkerConfig.from_env({**base, "WORKER_MODEL_BASE_URL": "ftp://api.example.com/v1"})
+
+
+# -- AUDIT-M2: W5 — httpx must be a runtime dependency ---------------------
+
+def test_httpx_is_a_runtime_dependency():
+    data = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    deps = data["project"]["dependencies"]
+    assert any(d.startswith("httpx") for d in deps), (
+        "httpx must be a runtime dependency, not dev-only"
+    )
+
+
+# -- AUDIT-M2 recommended: untrusted titles must not forge log lines ------
+
+def test_task_titles_are_sanitized_before_logging(server, fake, caplog):
+    from worker import _safe_log_text
+
+    assert _safe_log_text("a\nb\x1b[31mc\x7fd") == "ab[31mcd"
+    url = server["url"]
+    cfg = worker_config(url, fake.url)
+    task = make_task(
+        url, "Evil title\nFORGED LOG LINE\n\x1b[31mred", required_skill="python"
+    )
+    with caplog.at_level(logging.INFO, logger="roundtable.worker"):
+        assert drive(cfg) == "submitted"
+    assert "\nFORGED LOG LINE\n" not in caplog.text
+    assert "\x1b" not in caplog.text
+    assert all("\n" not in r.message for r in caplog.records)
 
 def _worker_env(url: str, model_url: str, **overrides) -> dict:
     env = {

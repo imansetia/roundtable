@@ -39,6 +39,7 @@ import os
 import signal
 import sys
 import time
+import urllib.parse
 from dataclasses import dataclass
 
 import httpx
@@ -63,10 +64,22 @@ SYSTEM_PROMPT = (
 #: instead of submitting a too-long answer.
 RESULT_MAX_CHARS = 20_000
 
+#: Hosts an http:// URL may point at (AUDIT-M2 W4). Anything else must
+#: be https://, so a typo cannot send a secret unencrypted.
+LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
+
 DEFAULT_ROUNDTABLE_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_POLL_INTERVAL = 10.0
 DEFAULT_MAX_TASKS_PER_HOUR = 10
 DEFAULT_MODEL_TIMEOUT = 120.0
+DEFAULT_COOLDOWN_SECONDS = 900.0  # 15 minutes (AUDIT-M2 W1)
+DEFAULT_MAX_FAILURES = 3  # give up on a task after this many failures
+
+
+def _safe_log_text(value: str) -> str:
+    """Strip control characters from untrusted text before logging it,
+    so a task title cannot forge log lines (no newlines, no ANSI escapes)."""
+    return "".join(ch for ch in value if ord(ch) >= 32 and ord(ch) != 127)
 
 
 class WorkerError(Exception):
@@ -83,6 +96,8 @@ class WorkerConfig:
     poll_interval: float = DEFAULT_POLL_INTERVAL
     max_tasks_per_hour: int = DEFAULT_MAX_TASKS_PER_HOUR
     model_timeout: float = DEFAULT_MODEL_TIMEOUT
+    cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS
+    max_failures: int = DEFAULT_MAX_FAILURES
 
     @classmethod
     def from_env(cls, env: os._Environ | dict | None = None) -> "WorkerConfig":
@@ -110,6 +125,18 @@ class WorkerConfig:
                 raise WorkerError(f"{name} must be > 0")
             return value
 
+        def _seconds(name: str, default: float) -> float:
+            raw = str(env.get(name) or "").strip()
+            if not raw:
+                return default
+            try:
+                value = float(raw)
+            except ValueError:
+                raise WorkerError(f"{name} must be a number") from None
+            if value < 0:
+                raise WorkerError(f"{name} must be >= 0")
+            return value
+
         def _int(name: str, default: int) -> int:
             raw = str(env.get(name) or "").strip()
             if not raw:
@@ -122,10 +149,30 @@ class WorkerConfig:
                 raise WorkerError(f"{name} must be at least 1")
             return value
 
+        def _url(name: str, value: str) -> str:
+            # AUDIT-M2 W4: refuse plain http:// to a non-loopback host, so
+            # a typo cannot send the board token or model key unencrypted.
+            parsed = urllib.parse.urlparse(value)
+            host = (parsed.hostname or "").lower()
+            if parsed.scheme == "https":
+                return value
+            if parsed.scheme == "http" and host in LOOPBACK_HOSTS:
+                return value
+            raise WorkerError(
+                f"{name} must be https://, or http:// to a loopback host "
+                f"(127.0.0.1, ::1, localhost)"
+            )
+
         return cls(
-            roundtable_url=str(env.get("ROUNDTABLE_URL") or DEFAULT_ROUNDTABLE_URL).strip(),
+            roundtable_url=_url(
+                "ROUNDTABLE_URL",
+                str(env.get("ROUNDTABLE_URL") or DEFAULT_ROUNDTABLE_URL).strip(),
+            ),
             token=required("ROUNDTABLE_TOKEN"),
-            model_base_url=required("WORKER_MODEL_BASE_URL").rstrip("/"),
+            model_base_url=_url(
+                "WORKER_MODEL_BASE_URL",
+                required("WORKER_MODEL_BASE_URL").rstrip("/"),
+            ),
             model_name=required("WORKER_MODEL_NAME"),
             api_key=required("WORKER_API_KEY"),
             poll_interval=_float("WORKER_POLL_INTERVAL", DEFAULT_POLL_INTERVAL),
@@ -133,6 +180,10 @@ class WorkerConfig:
                 "WORKER_MAX_TASKS_PER_HOUR", DEFAULT_MAX_TASKS_PER_HOUR
             ),
             model_timeout=_float("WORKER_MODEL_TIMEOUT", DEFAULT_MODEL_TIMEOUT),
+            cooldown_seconds=_seconds(
+                "WORKER_COOLDOWN_SECONDS", DEFAULT_COOLDOWN_SECONDS
+            ),
+            max_failures=_int("WORKER_MAX_FAILURES", DEFAULT_MAX_FAILURES),
         )
 
 
@@ -147,7 +198,15 @@ class RoundtableWorker:
         self._streams = None
         self._http: httpx.AsyncClient | None = None
         self._claimed_task_id: int | None = None
-        self._submitted_at: list[float] = []  # monotonic timestamps
+        # AUDIT-M2 W1: the hourly cap counts every model call (monotonic
+        # timestamps), not only submits, or a failing task would burn
+        # quota on every retry.
+        self._model_calls_at: list[float] = []
+        # Per-task failure state (in-memory only): when a task last failed
+        # (cool-down until), how often it failed, and tasks given up on.
+        self._failed_until: dict[int, float] = {}
+        self._failure_count: dict[int, int] = {}
+        self._given_up: set[int] = set()
         self._stop = asyncio.Event()
 
     # -- lifecycle ------------------------------------------------------
@@ -173,6 +232,34 @@ class RoundtableWorker:
         self.name = str(me["name"])
         self.skills = [str(s) for s in (me.get("skills") or [])]
         log.info("connected as %s (skills: %s)", self.name, ", ".join(self.skills))
+        await self._release_stale_claimed_tasks()
+
+    async def _release_stale_claimed_tasks(self) -> None:
+        """Release tasks this worker still has claimed from a previous run
+        (AUDIT-M2 W2): if the process died mid-task, the task would
+        otherwise stay claimed by us forever. Never raises."""
+        offset = 0
+        while True:
+            try:
+                data = await self._call_tool(
+                    "list_tasks",
+                    {"status": "claimed", "assignee": self.name, "limit": 100, "offset": offset},
+                )
+            except Exception as exc:
+                log.warning("could not list stale claimed tasks: %s", exc)
+                return
+            tasks = data.get("tasks", [])
+            for task in tasks:
+                try:
+                    await self._call_tool("release_task", {"task_id": task["id"]})
+                    log.info("released stale claimed task %s on startup", task["id"])
+                except Exception as exc:
+                    log.warning(
+                        "could not release stale task %s: %s", task["id"], exc
+                    )
+            if len(tasks) < 100:
+                return
+            offset += 100
 
     async def disconnect(self) -> None:
         """Close the MCP session. Never raises.
@@ -256,11 +343,59 @@ class RoundtableWorker:
         return True
 
     def _under_cap(self) -> bool:
-        """True if fewer than max_tasks_per_hour were submitted in the
-        last hour (rolling window, counted on submit)."""
+        """True if fewer than max_tasks_per_hour model calls were made in
+        the last hour (rolling window, counted on every call attempt —
+        AUDIT-M2 W1 — not only on submit)."""
         cutoff = time.monotonic() - 3600
-        self._submitted_at = [t for t in self._submitted_at if t > cutoff]
-        return len(self._submitted_at) < self.config.max_tasks_per_hour
+        self._model_calls_at = [t for t in self._model_calls_at if t > cutoff]
+        return len(self._model_calls_at) < self.config.max_tasks_per_hour
+
+    def _skip_task(self, task_id: int) -> bool:
+        """True if this task is in cool-down after a failure, or was
+        given up on after max_failures failures (AUDIT-M2 W1)."""
+        if task_id in self._given_up:
+            return True
+        until = self._failed_until.get(task_id)
+        if until is None:
+            return False
+        if time.monotonic() < until:
+            return True
+        del self._failed_until[task_id]  # cool-down expired
+        return False
+
+    async def _record_failure(self, task: dict, stage: str) -> None:
+        """Note one failed attempt on a task: cool it down, and after
+        max_failures failures stop retrying it and ask for help on the
+        board (AUDIT-M2 W1). The help message carries no secrets and no
+        model output, only a short reason phrase."""
+        task_id = task["id"]
+        count = self._failure_count.get(task_id, 0) + 1
+        self._failure_count[task_id] = count
+        self._failed_until[task_id] = (
+            time.monotonic() + self.config.cooldown_seconds
+        )
+        if count < self.config.max_failures:
+            return
+        self._given_up.add(task_id)
+        reason = {
+            "answer_too_long": (
+                f"the model's answer exceeded the {RESULT_MAX_CHARS}-character limit"
+            ),
+            "submit": "submitting the result failed",
+        }.get(stage, "the model call failed")
+        body = (
+            f"Worker {self.name} tried this task {count} times and every "
+            f"attempt failed ({reason}). Not retrying automatically; "
+            f"a human should look at it."
+        )
+        try:
+            await self._call_tool(
+                "post_message",
+                {"task_id": task_id, "body": body, "kind": "help_request"},
+            )
+        except Exception as exc:
+            log.warning("could not post help request for task %s: %s", task_id, exc)
+        log.warning("task %s failed %s times; giving up", task_id, count)
 
     # -- model ----------------------------------------------------------
 
@@ -329,46 +464,68 @@ class RoundtableWorker:
             return "stopped"
         if not self._under_cap():
             log.info(
-                "hourly cap reached (%d tasks/hour), waiting",
+                "hourly cap reached (%d model calls/hour), waiting",
                 self.config.max_tasks_per_hour,
             )
             return "capped"
-        data = await self._call_tool(
-            "list_tasks", {"status": "open", "limit": 50}
-        )
-        for task in data.get("tasks", []):
-            if not self._matches(task):
-                continue
-            try:
-                claimed = await self._call_tool(
-                    "claim_task", {"task_id": task["id"]}
-                )
-            except WorkerError:
-                continue  # claimed by someone else in the meantime
-            task = claimed["task"]
-            self._claimed_task_id = task["id"]
-            log.info("claimed task %s: %s", task["id"], task.get("title", ""))
-            try:
-                answer = await self._call_model(task)
-                if len(answer) > RESULT_MAX_CHARS:
-                    raise WorkerError(
-                        f"model answer is {len(answer)} chars, over the "
-                        f"{RESULT_MAX_CHARS} limit"
+        # AUDIT-M2 W3: page through all open tasks (limit 100 per page)
+        # instead of only the first 50, or a matching task behind many
+        # non-matching ones would starve forever.
+        offset = 0
+        while True:
+            data = await self._call_tool(
+                "list_tasks", {"status": "open", "limit": 100, "offset": offset}
+            )
+            tasks = data.get("tasks", [])
+            for task in tasks:
+                if not self._matches(task) or self._skip_task(task["id"]):
+                    continue
+                try:
+                    claimed = await self._call_tool(
+                        "claim_task", {"task_id": task["id"]}
                     )
-                await self._call_tool(
-                    "submit_result", {"task_id": task["id"], "result": answer}
+                except WorkerError:
+                    continue  # claimed by someone else in the meantime
+                task = claimed["task"]
+                self._claimed_task_id = task["id"]
+                log.info(
+                    "claimed task %s: %s",
+                    task["id"],
+                    _safe_log_text(str(task.get("title", ""))),
                 )
-            except BaseException as exc:
-                # Model failed, submit failed, or we were interrupted:
-                # put the task back so another worker can take it.
-                log.warning("task %s failed: %s", task["id"], exc)
-                await self._release_claimed()
-                return "released"
-            self._claimed_task_id = None
-            self._submitted_at.append(time.monotonic())
-            log.info("submitted result for task %s", task["id"])
-            return "submitted"
-        return "none"
+                stage = "model"
+                try:
+                    # AUDIT-M2 W1: count the attempt before calling, so a
+                    # failing task cannot burn quota on endless retries.
+                    self._model_calls_at.append(time.monotonic())
+                    answer = await self._call_model(task)
+                    if len(answer) > RESULT_MAX_CHARS:
+                        stage = "answer_too_long"
+                        raise WorkerError(
+                            f"model answer is {len(answer)} chars, over the "
+                            f"{RESULT_MAX_CHARS} limit"
+                        )
+                    stage = "submit"
+                    await self._call_tool(
+                        "submit_result", {"task_id": task["id"], "result": answer}
+                    )
+                except BaseException as exc:
+                    if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt)):
+                        # Interrupted (Ctrl+C): release, no cool-down and
+                        # no failure count — this is not a model failure.
+                        log.warning("task %s interrupted: %s", task["id"], exc)
+                        await self._release_claimed()
+                        return "released"
+                    log.warning("task %s failed: %s", task["id"], exc)
+                    await self._record_failure(task, stage)
+                    await self._release_claimed()
+                    return "released"
+                self._claimed_task_id = None
+                log.info("submitted result for task %s", task["id"])
+                return "submitted"
+            if len(tasks) < 100:
+                return "none"
+            offset += 100
 
     # -- main loop ------------------------------------------------------
 
