@@ -43,6 +43,11 @@ class Settings:
     db_path: str = "roundtable.db"
     agents_config: str = "agents.json"
     rate_limit_per_minute: int = 60
+    # Extra Host values the MCP server accepts, from
+    # ROUNDTABLE_ALLOWED_HOSTS (comma-separated). None means "use the
+    # SDK default": loopback only. Set it when the server sits behind a
+    # reverse proxy so the public DNS name is accepted (M3).
+    allowed_hosts: list[str] | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -56,7 +61,51 @@ class Settings:
             rate_limit_per_minute=int(
                 os.environ.get("ROUNDTABLE_RATE_LIMIT_PER_MINUTE", "60")
             ),
+            allowed_hosts=_parse_allowed_hosts(
+                os.environ.get("ROUNDTABLE_ALLOWED_HOSTS")
+            ),
         )
+
+
+def _parse_allowed_hosts(raw: str | None) -> list[str] | None:
+    """Parse ROUNDTABLE_ALLOWED_HOSTS (comma-separated hostnames).
+
+    Returns None when unset (SDK default: loopback only). A bare hostname
+    is accepted with and without a port, so both ``example.com`` and
+    ``example.com:*`` are stored. A bare ``*`` (allow any host) or a
+    value that is not a hostname is rejected: the protection must never
+    be silently disabled.
+    """
+    if raw is None:
+        return None
+    hosts: list[str] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if (
+            "/" in token
+            or any(ch.isspace() for ch in token)
+            or ".." in token
+            or token in ("*", ".*")
+            or ("*" in token and not token.endswith(":*"))
+            or token.startswith((".", "-"))
+        ):
+            raise ValueError(
+                "ROUNDTABLE_ALLOWED_HOSTS has an invalid entry "
+                f"{token!r}: use plain hostnames, optionally with ':port' "
+                "or ':*'; a bare '*' is never allowed"
+            )
+        hosts.append(token)
+        if ":" not in token:
+            # Bare hostname: accept it with and without a port.
+            hosts.append(f"{token}:*")
+    if not hosts:
+        raise ValueError(
+            "ROUNDTABLE_ALLOWED_HOSTS is set but lists no hosts; "
+            "unset it for loopback-only, or list a hostname"
+        )
+    return hosts
 
 
 def load_agents_config(path: str) -> list[Agent]:
