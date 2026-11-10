@@ -1,0 +1,112 @@
+"""Configuration for Roundtable (SPEC.md section 4).
+
+The Owner writes a JSON config file mapping bearer tokens to agents::
+
+    {"agents": [
+      {"name": "planner", "role": "leader", "skills": ["planning"],
+       "token": "REPLACE-ME"},
+      {"name": "coder", "role": "worker", "skills": ["python"],
+       "token": "REPLACE-ME-TOO"}
+    ]}
+
+Rules enforced here (fail fast at startup, before the server binds):
+- exactly one agent has role ``leader`` (SPEC section 4);
+- agent names are unique, roles are ``leader`` or ``worker``;
+- every token is non-empty.
+
+Tokens live only in this untracked config file (or are passed the same way
+by the Owner). They are never written to the repository, never logged, and
+are compared with :func:`hmac.compare_digest`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class Agent:
+    name: str
+    role: str  # "leader" | "worker"
+    skills: list[str] = field(default_factory=list)
+    token: str = field(default="", repr=False)
+
+
+@dataclass(frozen=True)
+class Settings:
+    host: str = "127.0.0.1"
+    port: int = 8000
+    db_path: str = "roundtable.db"
+    agents_config: str = "agents.json"
+    rate_limit_per_minute: int = 60
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        return cls(
+            host=os.environ.get("ROUNDTABLE_HOST", "127.0.0.1"),
+            port=int(os.environ.get("ROUNDTABLE_PORT", "8000")),
+            db_path=os.environ.get("ROUNDTABLE_DB_PATH", "roundtable.db"),
+            agents_config=os.environ.get(
+                "ROUNDTABLE_AGENTS_CONFIG", "agents.json"
+            ),
+            rate_limit_per_minute=int(
+                os.environ.get("ROUNDTABLE_RATE_LIMIT_PER_MINUTE", "60")
+            ),
+        )
+
+
+def load_agents_config(path: str) -> list[Agent]:
+    """Load and validate the Owner-written agents config file."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError as exc:
+        raise ValueError(
+            f"agents config not found: {path!r}. Copy agents.example.json "
+            "to agents.json and fill in real tokens (never commit it)."
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"agents config {path!r} is not valid JSON: {exc}") from exc
+
+    if not isinstance(raw, dict) or not isinstance(raw.get("agents"), list):
+        raise ValueError(
+            f"agents config {path!r} must be an object with an 'agents' list"
+        )
+
+    agents: list[Agent] = []
+    seen_names: set[str] = set()
+    for entry in raw["agents"]:
+        if not isinstance(entry, dict):
+            raise ValueError("each entry in 'agents' must be an object")
+        name = entry.get("name")
+        role = entry.get("role")
+        token = entry.get("token")
+        skills = entry.get("skills") or []
+        if not isinstance(name, str) or not name:
+            raise ValueError("each agent needs a non-empty string 'name'")
+        if name in seen_names:
+            raise ValueError(f"duplicate agent name in config: {name!r}")
+        seen_names.add(name)
+        if role not in ("leader", "worker"):
+            raise ValueError(
+                f"agent {name!r} has invalid role {role!r}; "
+                "must be 'leader' or 'worker'"
+            )
+        if not isinstance(token, str) or not token:
+            raise ValueError(f"agent {name!r} needs a non-empty 'token'")
+        if not isinstance(skills, list) or not all(
+            isinstance(s, str) for s in skills
+        ):
+            raise ValueError(f"agent {name!r} 'skills' must be a list of strings")
+        agents.append(Agent(name=name, role=role, skills=list(skills), token=token))
+
+    leaders = [a for a in agents if a.role == "leader"]
+    if len(leaders) != 1:
+        raise ValueError(
+            f"config must have exactly one leader, found {len(leaders)}"
+        )
+    if not agents:
+        raise ValueError("config must list at least one agent")
+    return agents
