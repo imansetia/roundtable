@@ -2,10 +2,109 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M3 audit fixes (2026-11-11, AUDIT-M3.md)
+
+Auditor verdict was PASS WITH REQUIRED FIXES — do not run the guide
+yet. Fixes D1–D8 were applied on top of `471ab46`. Each fix has a
+test in `tests/test_deploy_config.py` (13 tests) that failed before
+the fix and passes after, or a documented live check — see below
+(61 tests total, all passing). The auditor's report is kept unchanged
+under `docs/audits/`.
+
+- **D1:** Step 35's certbot command now has
+  `--deploy-hook "systemctl reload nginx"` (stored in the renewal
+  config, so every renewal reloads nginx), and Step 42 (was 41) checks
+  it with `sudo grep -r deploy_hook /etc/letsencrypt/renewal/`.
+  Without the hook a renewal would write new certificate files that
+  nginx never loads, and the site would fail with an expired
+  certificate ~90 days after install.
+- **D2:** Installing nginx starts it at once (Step 11 now says so).
+  Step 30 is now a reload, not `enable --now` (which does nothing to
+  a running nginx and would leave the default welcome site loaded):
+  `sudo nginx -t && sudo systemctl reload nginx`, then
+  `systemctl is-enabled nginx`. Step 3 now says the port check is only
+  valid before Step 11. Step 26's "nginx is not running yet" was also
+  wrong and is fixed.
+- **D3:** New Step 41 checks an authenticated request through nginx
+  over HTTPS and expects `400, not 421`; Part 11 gains the same check
+  as item 8. Steps 40 and 41 and Part 11 item 7 only ever sent
+  unauthenticated requests, which get 401 before the Host check runs —
+  a wrong `ROUNDTABLE_ALLOWED_HOSTS` would have passed every check.
+  (Inserting this step renumbered old Steps 41–47 to 42–48; every
+  cross-reference in the guide and CHANGELOG was updated.)
+- **D4:** `proxy_read_timeout` and `proxy_send_timeout` are now 180 s
+  (was 300 s): Azure drops idle public-IP flows after 4 minutes
+  (240 s), so the proxy must close an idle stream first — the MCP
+  client then sees a clean close and reconnects the GET stream
+  automatically (SDK 2.3.0 client `handle_get_stream`), instead of
+  sitting on a flow Azure dropped silently.
+- **D5:** Step 44 (restore) now moves the live `.db`, `.db-wal` and
+  `.db-shm` aside (never deletes them) before copying the backup in
+  as the `roundtable` user — after a crash SQLite would otherwise
+  replay the stale WAL onto the restored file.
+- **D6:** Step 6 now records which of the five packages are already
+  installed (`~/roundtable-packages-before.txt`); the Step 11 undo
+  removes only the packages this guide installed, never `git` or
+  `python3-venv` if they were already there.
+- **D7:** Step 16 and Step 46 now check out a named audited commit
+  (`$AUDITED_COMMIT`, set in Step 0 to the hash the Auditor gives
+  after approval) instead of following `main` — updates no longer go
+  live with unaudited code. Step 46 verifies with `rev-parse HEAD`.
+- **D8:** Step 3 uses `ss -Htln` (no header, so "no output" is
+  literally true); `sudo ss -tlnp` wherever process names are expected
+  (Steps 30, 39, Part 11 items 2–3); Step 0 now fails fast with
+  `test -n` on all three variables; Step 20's text is corrected (an
+  empty `PUBLIC_NAME` leaves the value empty, and the server refuses
+  to start — the safe failure).
+
+**Recommendations — all five taken:**
+- **R1:** The `$host` comment in `roundtable.conf` is corrected
+  (`$host` is the request's Host header, lowercased, port stripped).
+  Both nginx files gain a catch-all: `default_server` on 443 with
+  `ssl_reject_handshake on;` and on 80 with `return 444;`, so scanners
+  hitting the bare IP get nothing.
+- **R2:** `MemorySwapMax=0` added to the unit (`MemoryMax` does not
+  cover swap, and the VM is already swapping). Verified live via
+  `systemctl show` (see below).
+- **R3:** Steps 25 and 41 and Part 11 item 8 now pass the header on
+  stdin (`printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -H @-
+  ...`), so the token never appears on curl's command line where `ps`
+  could show it.
+- **R4:** `ROUNDTABLE_ALLOWED_HOSTS` entries are lowercased on parse
+  (nginx sends `$host` lowercase). Test in
+  `tests/test_allowed_hosts.py`; verified live: the env file held
+  `Test.Example.COM` and a request with Host `test.example.com`
+  returned 400.
+- **R5:** Step 48 (uninstall) now offers restoring the `default`
+  nginx site link and removing the nginx/certbot packages this guide
+  installed (per the Step 6 record).
+
+**Auditor's answers to the M3 open questions (recorded here and in
+the guide):** DNS name is `roundtable-k7q2.eastasia.cloudapp.azure.com`,
+already set by the Owner (static IP 20.255.51.158) — Step 0 now fills
+it in as the example. Backups stay manual for now; a timer can come
+after M4. Hermes health check by PID, port 51909 and memory is enough
+for M3; on the day of the run the Auditor will also check Hermes's own
+user-level unit before and after. N2 (rename
+`WORKER_MAX_TASKS_PER_HOUR`) is unchanged, still for before 1.0.
+`worker.py` is still not deployed — correct, the Owner's decision.
+The two-file nginx site and the extra paths (`docs/DEPLOY.md`,
+`deploy/`) are accepted deviations.
+
+**Live verification (this round):** the unit was run under systemd in
+a matching Ubuntu 24.04 VM with the new `MemorySwapMax=0` setting:
+service active, `MemoryMax=209715200`, `MemorySwapMax=0`,
+`OOMScoreAdjust=500` confirmed via `systemctl show`; requests 401
+without a token, 400 with a token and the configured (lowercase) Host
+from an uppercase env value, 421 for an unlisted Host; RSS ~70 MiB;
+clean stop; sandbox deployment fully removed afterwards. Full suite:
+**61 passed**. The two flaky M2 worker tests noted in the audit did
+not fail in this run.
+
 ## M3 — deployment guide (2026-11-10)
 
 Deployment guide for HermesVM (Ubuntu 24.04, Azure), written for a
-beginner Owner: `docs/DEPLOY.md` (47 steps, one command per step, each
+beginner Owner: `docs/DEPLOY.md` (48 steps, one command per step, each
 with what it does, expected output and how to undo it) plus templates
 under `deploy/` (systemd unit, two-phase nginx site files, example
 EnvironmentFile). Nothing has been exposed to the internet: the Owner
@@ -64,7 +163,9 @@ the Host check (421) for requests without a token.
   hand-written site file is never auto-edited), two-phase nginx site
   (HTTP-only for the ACME challenge, then the full HTTPS site), HTTP
   redirects to HTTPS, only `/mcp` exposed (everything else 404),
-  `proxy_buffering off`, 300 s read/send timeouts, `client_max_body_size
+  `proxy_buffering off`, 180 s read/send timeouts (changed from 300 s
+  in the M3 audit fixes — Azure drops idle public-IP flows after 4
+  minutes, so the proxy must close first), `client_max_body_size
   256k` (largest legitimate input is a 20,000-char result, ~25 KB
   typical, ~120 KB worst-case escaped Unicode), default combined access
   log (never records Authorization), TLS 1.2/1.3 + modern ciphers, HSTS
@@ -96,13 +197,18 @@ the Host check (421) for requests without a token.
   cannot pass `nginx -t` until the certificate files exist.
 
 **Open questions (for the Owner / Auditor):**
-- The exact DNS label and region (`<label>.<region>.cloudapp.azure.com`)
-  — the Owner fills these in at Step 0.
+- The exact DNS label and region — **answered by the Auditor in the
+  M3 audit fixes (see above):** `roundtable-k7q2.eastasia.cloudapp.azure.com`,
+  already set by the Owner (static IP 20.255.51.158). Step 0 now fills
+  it in as the example.
 - Should a daily backup run automatically (systemd timer) or stay
-  manual (Step 42)? The guide documents manual backups only.
+  manual (Step 43)? **Answered: manual for now** (Auditor); a timer
+  can come after M4, once there is board data worth protecting.
 - Hermes is checked by process name and port 51909 in the guide,
-  because its systemd unit name was not provided — the Auditor should
-  confirm that check is sufficient (or supply the unit name).
+  because its systemd unit name was not provided — **answered: PID,
+  port 51909 and memory are enough for M3;** on the day of the run the
+  Auditor will also check Hermes's own user-level unit
+  (`systemctl --user status` as `azureuser`) before and after.
 - `WORKER_MAX_TASKS_PER_HOUR` counts model calls, not tasks
   (AUDIT-M2-FIXES N2): consider renaming to
   `WORKER_MAX_MODEL_CALLS_PER_HOUR` before a 1.0 release. No rename in

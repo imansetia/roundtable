@@ -33,8 +33,12 @@ UMask=0077
 # headroom. If the kernel itself runs out of RAM, prefer killing
 # Roundtable (score 500) over Hermes (default 0): higher score = killed
 # first. MemoryAccounting lets `systemctl status` show the live use.
+# MemorySwapMax=0: MemoryMax does not cover swap, and this VM is
+# already swapping — without this, Roundtable could push Hermes's pages
+# out to swap. The service gets no swap at all (AUDIT-M3 R2).
 MemoryAccounting=true
 MemoryMax=200M
+MemorySwapMax=0
 OOMScoreAdjust=500
 
 # --- Sandboxing -----------------------------------------------------------

@@ -160,6 +160,16 @@ def test_allowed_hosts_parsing(monkeypatch):
     assert hosts is not None
     assert PUBLIC_HOST in hosts and "other.example.com:*" in hosts
 
+    # Hostnames are case-insensitive and nginx sends $host lowercase,
+    # so entries are lowercased on parse (AUDIT-M3 R4).
+    monkeypatch.setenv(
+        "ROUNDTABLE_ALLOWED_HOSTS", "MyLabel.WestEurope.Cloudapp.Azure.Com"
+    )
+    hosts = Settings.from_env().allowed_hosts
+    assert hosts is not None
+    assert "mylabel.westeurope.cloudapp.azure.com" in hosts
+    assert "MyLabel" not in " ".join(hosts)
+
     # A bare "*" would allow any host: never accepted.
     monkeypatch.setenv("ROUNDTABLE_ALLOWED_HOSTS", "*")
     with pytest.raises(ValueError, match="ROUNDTABLE_ALLOWED_HOSTS"):

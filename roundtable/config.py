@@ -80,7 +80,9 @@ def _parse_allowed_hosts(raw: str | None) -> list[str] | None:
         return None
     hosts: list[str] = []
     for token in raw.split(","):
-        token = token.strip()
+        # Hostnames are case-insensitive and nginx sends $host lowercase,
+        # so an uppercase entry would never match (AUDIT-M3 R4).
+        token = token.strip().lower()
         if not token:
             continue
         if (

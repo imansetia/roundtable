@@ -46,28 +46,37 @@ Roundtable process uses about **70 MiB**; nginx uses about **10–20 MiB**
 total; certbot uses nothing while idle (it only runs during renewal).
 Step 23 measures the real numbers on your VM after install.
 
-## Step 0 — Set the two names you will reuse
+## Step 0 — Set the names you will reuse
 
 **Command:**
 
 ```bash
-PUBLIC_NAME=<label>.<region>.cloudapp.azure.com
+PUBLIC_NAME=roundtable-k7q2.eastasia.cloudapp.azure.com
 EMAIL=you@example.com
-echo "$PUBLIC_NAME"
-echo "$EMAIL"
+AUDITED_COMMIT=<paste the commit hash the Auditor gives you after approving the guide>
+test -n "$PUBLIC_NAME" && test -n "$EMAIL" && test -n "$AUDITED_COMMIT" && echo ok
 ```
 
-**What it does:** stores your public DNS name and your email address in
-shell variables, so later commands can use `$PUBLIC_NAME` and `$EMAIL`
-instead of you retyping them. `<label>` is the DNS label you set in the
-Azure Portal (Part 2), `<region>` is the Azure region, e.g.
-`westeurope`. `EMAIL` is where Let's Encrypt sends expiry warnings.
+**What it does:** stores your public DNS name, your email address, and
+the audited code version in shell variables, so later commands can use
+`$PUBLIC_NAME`, `$EMAIL` and `$AUDITED_COMMIT` instead of you retyping
+them. `PUBLIC_NAME` is the DNS name already set for this VM (the
+Auditor confirmed it: `roundtable-k7q2.eastasia.cloudapp.azure.com`,
+static IP 20.255.51.158). `EMAIL` is where Let's Encrypt sends expiry
+warnings — replace `you@example.com` with your real address.
+`AUDITED_COMMIT` is the exact commit the Auditor approved — a
+40-character hash. The last line checks none of the three is empty: an
+empty value would silently break later steps (an empty
+`ROUNDTABLE_ALLOWED_HOSTS` makes the server refuse to start, and an
+empty `server_name` makes nginx reject the config).
 
-**Expected:** the two `echo` lines print exactly what you typed, e.g.
-`mylabel.westeurope.cloudapp.azure.com` and your email address.
+**Expected:** `ok`. If the last line prints nothing, one of the three
+variables is empty — fix it before going on. (If you have not been
+given the audited commit yet, the guide is not ready to run: ask the
+Auditor first.)
 
 **Undo:** close the SSH session (the variables are gone), or run
-`unset PUBLIC_NAME EMAIL`.
+`unset PUBLIC_NAME EMAIL AUDITED_COMMIT`.
 
 > **Note:** these variables live only in this SSH session. If you open a
 > new terminal later, run Step 0 again first.
@@ -114,10 +123,14 @@ running.
 **Command:**
 
 ```bash
-ss -tlnp 'sport = :80 or sport = :443 or sport = :8000'
+ss -Htln 'sport = :80 or sport = :443 or sport = :8000'
 ```
 
 **What it does:** lists anything already listening on those three ports.
+The `-H` flag hides the header line, so "no output" below is literally
+true. This check is only valid **before Step 11** (installing nginx):
+apt starts nginx on port 80 at once, so after Step 11 port 80 is
+supposed to be taken.
 
 **Expected:** no output at all (all three are free). If something is
 listening, stop and ask — do not kill it yourself.
@@ -164,16 +177,24 @@ full for another service.
 
 ```bash
 which nginx certbot; dpkg -l | grep -E 'nginx|certbot' || true
+for pkg in nginx certbot python3-venv sqlite3 git; do dpkg-query -W -f='${Package}: ${Status}\n' "$pkg" 2>/dev/null || echo "$pkg: not installed"; done | tee ~/roundtable-packages-before.txt
 ```
 
-**What it does:** looks for existing nginx/certbot installs.
+**What it does:** looks for existing nginx/certbot installs, then
+records which of the five packages this guide is about to install are
+already on the machine, in `~/roundtable-packages-before.txt`. The
+record matters for the undo in Step 11: packages that were already
+there must never be removed (Hermes or the system may use them).
 
 **Expected:** no output from `which`, and no package lines from `dpkg`
-(or only lines starting with `un`, meaning "not installed"). If either
-is already installed, stop and ask — this guide assumes a clean slate
-and will not reconfigure an existing setup blindly.
+(or only lines starting with `un`, meaning "not installed"). The second
+command prints five lines, e.g. `nginx: not installed`,
+`git: install ok installed`. If nginx or certbot is already installed,
+stop and ask — this guide assumes a clean slate and will not
+reconfigure an existing setup blindly.
 
-**Undo:** nothing to undo (read-only check).
+**Undo:** nothing to undo (read-only check). The record file stays in
+your home directory until you delete it.
 
 ### Step 7 — Confirm fail2ban and unattended-upgrades are running
 
@@ -274,19 +295,29 @@ sudo apt install -y nginx certbot python3-venv sqlite3 git
 
 **What it does:** installs the web server (nginx), the Let's Encrypt
 client (certbot), Python's venv module, the SQLite command-line tool
-(for backups), and git. Nothing is started or configured yet.
+(for backups), and git. **Note: installing nginx starts it at once**
+(on port 80, with the default welcome site). That is harmless at this
+point — port 80 is still blocked from the internet by ufw and the Azure
+NSG (those rules come in Part 7) — but it means Step 30 must *reload*
+nginx to load our site, not merely enable it. Nothing is configured
+yet.
 
 **Expected:** ends with `Processing triggers ...` and no errors.
 
 **Undo:**
 
 ```bash
-sudo apt remove -y nginx certbot python3-venv sqlite3 git
+sudo apt remove -y <only the packages this guide installed>
 sudo apt autoremove -y
 ```
 
 (Only do this if you are abandoning the deployment entirely, and only
-before any later step has used these packages.)
+before any later step has used these packages.) Check
+`~/roundtable-packages-before.txt` (Step 6) first and remove **only
+the packages that were not installed before** — never `git` or
+`python3-venv` if they were already installed, since Hermes or the system
+may use them. For example, if the file says only nginx and certbot were
+new, run `sudo apt remove -y nginx certbot`.
 
 ### Step 12 — Check the installed versions
 
@@ -436,7 +467,8 @@ you generate new ones.)
 > Never paste the whole file anywhere, and never put a token in a chat
 > message, a screenshot, or a git commit. To add or rename agents, edit
 > this file (exactly one leader, tokens at least 32 characters, no two
-> agents sharing a token) and then restart the service (Step 36).
+> agents sharing a token) and then restart the service with
+> `sudo systemctl restart roundtable`.
 
 ### Step 16 — Clone the code
 
@@ -444,14 +476,28 @@ you generate new ones.)
 
 ```bash
 git clone https://github.com/imansetia/roundtable.git /srv/roundtable/app
+git -C /srv/roundtable/app checkout "$AUDITED_COMMIT"
 ```
 
 **What it does:** downloads the Roundtable code into
 `/srv/roundtable/app`. The repository is public, so no login is needed.
+Then it checks out exactly the commit the Auditor approved (Step 0) —
+never just "whatever `main` happens to be today", so the deployed code
+is the audited code. (The commit must already be pushed to GitHub; if
+the checkout says the commit is not found, the bundle has not been
+pushed yet — stop and ask.)
 
-**Expected:** `Cloning into '/srv/roundtable/app'...` and a `done.`
-Verify with `ls /srv/roundtable/app` — you should see `README.md`,
-`SPEC.md`, `roundtable/`, `worker.py`, `deploy/`, `docs/`, `tests/`.
+**Expected:** `Cloning into '/srv/roundtable/app'...` and a `done.`,
+then no output from the checkout (it puts you on a detached HEAD at
+that commit — that is intended). Verify with:
+
+```bash
+git -C /srv/roundtable/app rev-parse HEAD
+```
+
+which must print exactly `$AUDITED_COMMIT`, and `ls
+/srv/roundtable/app` — you should see `README.md`, `SPEC.md`,
+`roundtable/`, `worker.py`, `deploy/`, `docs/`, `tests/`.
 
 **Undo:**
 
@@ -551,8 +597,13 @@ sudo cat /srv/roundtable/roundtable.env
 ```
 
 `ROUNDTABLE_ALLOWED_HOSTS` must show your real name, not the
-placeholder. If it still says `roundtable.example.com`, Step 0's
-`PUBLIC_NAME` was empty — run Step 0 again, then repeat this step.
+placeholder. If it still says `roundtable.example.com`, the `sed`
+found nothing to replace — either Step 0's `PUBLIC_NAME` was never set
+(run Step 0 again, then repeat this step) or it is empty, in which
+case the `sed` leaves the value empty (`ROUNDTABLE_ALLOWED_HOSTS=`
+with nothing after it): the server will refuse to start with an empty
+allowed-hosts list, which is the safe failure — fix Step 0 and repeat
+this step.
 
 **Undo:**
 
@@ -584,6 +635,7 @@ are comments inside the file.)
 | `UMask=0077` | Files the service creates are owner-only | The database is created mode 600 |
 | `MemoryAccounting=true` | systemd tracks the service's memory use | So `systemctl status` shows the live `Memory:` line used in Step 26 |
 | `MemoryMax=200M` | Kills the service if it passes 200 MiB | Measured use is ~70 MiB; 200 MiB is ~3x headroom, and leaves the rest of the VM's ~320 MiB free for Hermes and the system |
+| `MemorySwapMax=0` | The service gets no swap at all | `MemoryMax` does not cover swap, and this VM is already swapping — without this, Roundtable could push Hermes's pages out to swap |
 | `OOMScoreAdjust=500` | If the kernel itself runs out of RAM, kill Roundtable first | Hermes keeps the default score 0; higher score = killed first |
 | `NoNewPrivileges=true` | The process can never gain privileges | Even if it executed a setuid program by accident |
 | `ProtectSystem=strict` | The whole filesystem is read-only for the app | It cannot modify code, config or system files |
@@ -673,16 +725,19 @@ app processes anything.
 
 ```bash
 TOKEN=$(sudo python3 -c "import json; print(json.load(open('/srv/roundtable/agents.json'))['agents'][0]['token'])")
-curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:8000/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}'
+printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:8000/mcp -H @- -H "Content-Type: application/json" -d '{}'
 unset TOKEN
 ```
 
 **What it does:** reads the leader token from the file into a shell
-variable — the token never enters your shell history — sends an
-authenticated request, then forgets the variable. The body `{}` is not
-a valid MCP message, so `400` means "you reached the app and it
-understood the request enough to reject the body". `421` here would
-mean the Host check rejected you (wrong allowed-hosts setting).
+variable — the token never enters your shell history — then sends an
+authenticated request with the header passed on stdin (`curl -H @-`),
+so the token never appears on curl's command line, where `ps` could
+show it to other local users for a moment. Then it forgets the
+variable. The body `{}` is not a valid MCP message, so `400` means
+"you reached the app and it understood the request enough to reject
+the body". `421` here would mean the Host check rejected you (wrong
+allowed-hosts setting).
 
 **Expected:** `400`.
 
@@ -704,9 +759,10 @@ normal VM, `systemctl status roundtable` also shows a `Memory:` line
 line above is the measurement — the cap is still enforced.
 
 **Expected:** the service uses about **70–120 MiB** (RSS around
-70,000 KB). nginx is not running yet, so `free` should still show
-roughly what Step 5 showed. If the service uses more than 150 MiB,
-stop and ask — something is wrong; do not raise the cap yourself.
+70,000 KB). nginx has been running since Step 11 (using ~10–20 MiB),
+so `free` should show only slightly less than Step 5. If the service
+uses more than 150 MiB, stop and ask — something is wrong; do not raise
+the cap yourself.
 
 **Undo:** nothing to undo (read-only check).
 
@@ -792,21 +848,30 @@ file, and run `nginx -t` again. Never skip this step.
 
 **Undo:** nothing to undo (read-only check).
 
-### Step 30 — Start nginx
+### Step 30 — Load the new site (reload, not enable --now)
 
 **Command:**
 
 ```bash
-sudo systemctl enable --now nginx
+sudo nginx -t && sudo systemctl reload nginx
+systemctl is-enabled nginx
 ```
 
-**What it does:** enables nginx (start on boot) and starts it now, with
-the phase-1 site.
+**What it does:** tests the config again, then tells the running nginx
+to re-read it. This step is a *reload*, not a start: installing nginx
+in Step 11 already started it — with the default welcome site. `enable
+--now` would do nothing to a running nginx, and the default site would
+stay loaded (Step 31 would then get the welcome page instead of the
+redirect). The reload swaps in the phase-1 site. The second command
+checks nginx is enabled (start on boot), which the package install
+already did.
 
-**Expected:** no output. Verify with:
+**Expected:** the `nginx -t` output (`syntax is ok`, `test is
+successful`), no output from the reload, and `enabled` from
+`is-enabled`. Verify nginx is actually serving the new site with:
 
 ```bash
-systemctl is-active nginx && ss -tlnp | grep -E ':80 '
+systemctl is-active nginx && sudo ss -tlnp | grep -E ':80 '
 ```
 
 `is-active` must print `active`, and `ss` must show nginx listening on
@@ -902,7 +967,7 @@ or you may lock yourself out of SSH.
 **Command:**
 
 ```bash
-sudo certbot certonly --webroot -w /var/www/html -d "$PUBLIC_NAME" --agree-tos --no-eff-email -m "$EMAIL"
+sudo certbot certonly --webroot -w /var/www/html -d "$PUBLIC_NAME" --agree-tos --no-eff-email -m "$EMAIL" --deploy-hook "systemctl reload nginx"
 ```
 
 **What it does:** asks Let's Encrypt for a certificate for your public
@@ -911,7 +976,13 @@ name. The `--webroot` method writes a small answer file into
 over port 80 through nginx (phase 1 serves that path) to prove you own
 the name. `--agree-tos` accepts the terms, `-m` gives your email for
 expiry warnings, `--no-eff-email` declines sharing it with the EFF.
-certbot runs once and exits — it does not stay running.
+`--deploy-hook "systemctl reload nginx"` is the important part most
+guides forget: `certonly` has no installer, so without it a later
+`certbot renew` would write the new certificate files but nginx would
+keep serving the old one from memory — and about 90 days after install
+the site would start failing with an expired certificate. The hook is
+stored in the renewal config, so every future renewal reloads nginx
+automatically. certbot runs once and exits — it does not stay running.
 
 **Expected:** ends with
 
@@ -1007,7 +1078,7 @@ cannot do that.
 **Expected:** no output. Verify with:
 
 ```bash
-systemctl is-active nginx && ss -tlnp | grep -E ':80 |:443 '
+systemctl is-active nginx && sudo ss -tlnp | grep -E ':80 |:443 '
 ```
 
 `is-active` must print `active`, and `ss` must show nginx on both
@@ -1037,12 +1108,40 @@ The first must print `404` (only `/mcp` is exposed) and the second
 
 **Undo:** nothing to undo (read-only check).
 
-### Step 41 — Check automatic renewal works
+### Step 41 — Check an authenticated request through nginx
+
+**Command:**
+
+```bash
+TOKEN=$(sudo python3 -c "import json; print(json.load(open('/srv/roundtable/agents.json'))['agents'][0]['token'])")
+printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -s -o /dev/null -w "%{http_code}\n" -X POST https://"$PUBLIC_NAME"/mcp -H @- -H "Content-Type: application/json" -d '{}'
+unset TOKEN
+```
+
+**What it does:** the same check as Step 25, but through nginx over
+HTTPS. This is the check that actually proves the deployment works:
+Step 40's requests have no token, so they get 401 from the auth gate
+*before* the Host check runs — a wrong `ROUNDTABLE_ALLOWED_HOSTS`
+would pass every check so far and only show up later as 421. Here the
+token is sent the same way as in Step 25 (header on stdin, never on
+the command line), and the body `{}` is not a valid MCP message.
+
+**Expected:** `400, not 421`. `400` means the request reached the app
+through the proxy and the app rejected only the body. `421` means the
+Host check rejected you: the name in `ROUNDTABLE_ALLOWED_HOSTS`
+(Step 20) does not match the name nginx sends — fix the
+EnvironmentFile, then `sudo systemctl restart roundtable`, and repeat
+this step.
+
+**Undo:** the `unset TOKEN` at the end is the undo.
+
+### Step 42 — Check automatic renewal works
 
 **Command:**
 
 ```bash
 systemctl list-timers --all | grep certbot
+sudo grep -r deploy_hook /etc/letsencrypt/renewal/
 sudo certbot renew --dry-run
 ```
 
@@ -1050,20 +1149,25 @@ sudo certbot renew --dry-run
 the certbot package; it runs `certbot renew` twice a day and renews
 any certificate due to expire within 30 days, using the webroot method
 saved in step 35 — nginx keeps serving the challenge path, so renewal
-needs no downtime). Then it simulates a renewal against Let's
+needs no downtime). Then it checks the renewal config actually
+contains the reload hook from Step 35 (`deploy_hook = systemctl reload
+nginx`): without it, a renewal would write new certificate files that
+nginx never loads. Finally it simulates a renewal against Let's
 Encrypt's staging server.
 
 **Expected:** the timer line shows `certbot.timer` with a next-run
-time, and the dry run ends with
-`Congratulations, all simulated renewals succeeded`. The dry run takes
-a minute or so — be patient.
+time, the `grep` prints a line with `deploy_hook`, and the dry run ends
+with `Congratulations, all simulated renewals succeeded`. The dry run
+takes a minute or so — be patient. If the `grep` prints nothing, the
+hook was not stored: re-run Step 35 with the `--deploy-hook` flag and
+come back here.
 
 **Undo:** nothing to undo (read-only check; the dry run issues no real
 certificate).
 
 ## Part 9 — Backup and restore
 
-### Step 42 — Back up the database (safe while the server runs)
+### Step 43 — Back up the database (safe while the server runs)
 
 **Command:**
 
@@ -1094,31 +1198,48 @@ sudo rm /srv/roundtable/backups/roundtable-YYYY-MM-DD.db
 > password manager (not onto the VM in plaintext, not into git). If
 > you lose `agents.json`, every agent token is lost with it.
 
-### Step 43 — Restore a backup (only if the database is damaged)
+### Step 44 — Restore a backup (only if the database is damaged)
 
 **Command:**
 
 ```bash
 sudo systemctl stop roundtable
+sudo -u roundtable bash -c 'for suffix in "" "-wal" "-shm"; do f="/srv/roundtable/data/roundtable.db$suffix"; [ -e "$f" ] && mv "$f" "$f.before-restore"; done'
 sudo -u roundtable cp /srv/roundtable/backups/roundtable-YYYY-MM-DD.db /srv/roundtable/data/roundtable.db
 sudo systemctl start roundtable
 systemctl status roundtable --no-pager | head -n 5
 ```
 
 **What it does:** stops the service (so nothing writes during the
-restore), replaces the live database with the backup (replace
-`YYYY-MM-DD` with the backup's real date), and starts the service
-again.
+restore), then moves the live database **and** its write-ahead log
+(`roundtable.db-wal`) and shared-memory file (`roundtable.db-shm`)
+aside — do not delete them — and only then copies the backup in as the
+service user (so the restored file is owned by `roundtable`, mode 600).
+The move-aside matters: after a crash (the case this step is for) a
+stale WAL is usually still on disk, and SQLite would replay it onto
+the restored file, corrupting the restore with the old, broken data.
+Then it starts the service again. (Replace `YYYY-MM-DD` with the
+backup's real date.)
 
 **Expected:** `Active: active (running)` in the status output, and
-Step 24's curl still returns `401`.
+Step 24's curl still returns `401`. Once you have confirmed the board
+looks right, you may delete the `.before-restore` files:
 
-**Undo:** restore the backup you made before this one (Step 42), or
-re-run Step 43 with a different backup file.
+```bash
+sudo rm /srv/roundtable/data/roundtable.db.before-restore /srv/roundtable/data/roundtable.db-wal.before-restore /srv/roundtable/data/roundtable.db-shm.before-restore
+```
+
+(If a file does not exist, `rm` will complain — that is fine.)
+
+**Undo:** restore the backup you made before this one (Step 43), or
+re-run Step 44 with a different backup file. If the restore made
+things worse and you have not deleted them yet, the moved-aside files
+are your way back: stop the service, move the `.before-restore` files
+back (dropping the suffix), and start it again.
 
 ## Part 10 — Updating, rollback, uninstall
 
-### Step 44 — Record the current version before updating
+### Step 45 — Record the current version before updating
 
 **Command:**
 
@@ -1127,37 +1248,44 @@ git -C /srv/roundtable/app rev-parse HEAD | tee ~/roundtable-commit-before-updat
 ```
 
 **What it does:** prints the commit the server currently runs and saves
-it to a file in your home directory, so a rollback (Step 46) knows
+it to a file in your home directory, so a rollback (Step 47) knows
 exactly where to go back to.
 
 **Expected:** a 40-character commit hash, e.g. `0399ab6...`.
 
 **Undo:** nothing to undo (read-only check).
 
-### Step 45 — Update to the newest code
+### Step 46 — Update to the audited version
 
 **Command:**
 
 ```bash
-git -C /srv/roundtable/app pull
+git -C /srv/roundtable/app fetch origin
+git -C /srv/roundtable/app checkout "$AUDITED_COMMIT"
+git -C /srv/roundtable/app rev-parse HEAD
 /srv/roundtable/venv/bin/pip install /srv/roundtable/app
 sudo systemctl restart roundtable
 systemctl status roundtable --no-pager | head -n 5
 ```
 
-**What it does:** downloads the newest code, reinstalls it into the
-venv, and restarts the service (restart is correct here — it is
-Roundtable's own service, and the new code only loads on a restart;
-the "reload, never restart" rule is for nginx). Then checks it came
-back up.
+**What it does:** fetches the newest code from GitHub, then checks out
+exactly the commit the Auditor approved for this update
+(`$AUDITED_COMMIT` — set it in Step 0 to the hash the Auditor gives
+you for the update; never `git pull` on `main` and go live with
+whatever happens to be there). The `rev-parse` must print exactly
+`$AUDITED_COMMIT`. Then it reinstalls the venv and restarts the
+service (restart is correct here — it is Roundtable's own service, and
+the new code only loads on a restart; the "reload, never restart" rule
+is for nginx). Then checks it came back up.
 
 **Expected:** `Active: active (running)`. Then re-run Step 24 (local
-401 check). If the service fails to start, read the log (Step 23) —
-and roll back (Step 46) rather than guessing.
+401 check) and Step 41 (authenticated check through nginx). If the
+service fails to start, read the log (Step 23) — and roll back
+(Step 47) rather than guessing.
 
-**Undo:** Step 46.
+**Undo:** Step 47.
 
-### Step 46 — Roll back to the previous version
+### Step 47 — Roll back to the previous version
 
 **Command:**
 
@@ -1169,18 +1297,18 @@ sudo systemctl restart roundtable
 systemctl status roundtable --no-pager | head -n 5
 ```
 
-**What it does:** checks out the exact commit recorded in Step 44,
-reinstalls it, and restarts. (To go back to the newest code afterwards,
-run `git -C /srv/roundtable/app checkout main` and repeat the install
-and restart.)
+**What it does:** checks out the exact commit recorded in Step 45,
+reinstalls it, and restarts. (To go to a newer audited version
+afterwards, get its hash from the Auditor, set it as
+`AUDITED_COMMIT`, and repeat Step 46 — never `git checkout main`.)
 
 **Expected:** `Active: active (running)`, and Step 24 returns `401`.
 
-**Undo:** Step 45.
+**Undo:** Step 46.
 
-### Step 47 — Full uninstall (removes only Roundtable's things)
+### Step 48 — Full uninstall (removes only Roundtable's things)
 
-Run these in order. **Back up the database first (Step 42)** — after
+Run these in order. **Back up the database first (Step 43)** — after
 this, the board data is gone.
 
 **Command:**
@@ -1204,6 +1332,26 @@ removes the two ufw rules this guide added, deletes Roundtable's
 directory tree (code, venv, database, backups, tokens, settings), and
 deletes the service user. Then, in the Azure Portal, delete the
 `AllowHTTP` and `AllowHTTPS` NSG rules from Step 9.
+
+**Optional, if you want the VM back exactly as it was:**
+- Restore the default nginx site (removed in Step 28):
+
+```bash
+sudo ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+- Remove the packages this guide installed — but only the ones that
+  were not already there (check `~/roundtable-packages-before.txt`
+  from Step 6 first; never remove `git` or `python3-venv` if they were
+  already installed):
+
+```bash
+sudo apt remove -y nginx certbot
+sudo apt autoremove -y
+```
+
+(Adjust the package list to what the record file says was new.)
 
 **What it deliberately does not touch:** Hermes, fail2ban,
 unattended-upgrades, Tailscale, the SSH rule, and the rest of the VM.
@@ -1233,12 +1381,13 @@ systemctl show roundtable -p MemoryMax
 
 # 2. The app listens on loopback only; nginx on 80/443; nothing on 8000
 #    from outside the VM.
-ss -tlnp | grep -E ':8000 |:80 |:443 |:51909 '
+sudo ss -tlnp | grep -E ':8000 |:80 |:443 |:51909 '
 #    Expected: 127.0.0.1:8000 (python), 0.0.0.0:80 and 0.0.0.0:443
 #    (nginx), 127.0.0.1:51909 (hermes). No 0.0.0.0:8000 line.
+#    (sudo is needed: without it ss hides other users' process names.)
 
 # 3. Hermes is still the same process as in Step 2, still listening.
-ps -o pid,rss,etime,comm -C hermes; ss -tlnp | grep 51909
+ps -o pid,rss,etime,comm -C hermes; sudo ss -tlnp | grep 51909
 #    Expected: the same PID as recorded in Step 2, still listening on
 #    127.0.0.1:51909.
 
@@ -1252,10 +1401,12 @@ free -h
 #    Expected: still a comfortable amount available (the new components
 #    use ~80-140 MiB total).
 
-# 6. Certificate renews automatically.
+# 6. Certificate renews automatically, and the renewal reloads nginx.
 systemctl list-timers --all | grep certbot
+sudo grep -r deploy_hook /etc/letsencrypt/renewal/
 sudo certbot renew --dry-run
-#    Expected: certbot.timer listed; dry run succeeds.
+#    Expected: certbot.timer listed; the grep prints a deploy_hook line;
+#    dry run succeeds.
 ```
 
 ### From outside the VM (your own computer, not the VM)
@@ -1265,21 +1416,29 @@ sudo certbot renew --dry-run
 curl -s -o /dev/null -w "%{http_code}\n" -X POST https://$PUBLIC_NAME/mcp -H "Content-Type: application/json" -d '{}'
 #    Expected: 401
 
-# 8. Any other path -> 404 (only /mcp is exposed).
+# 8. With a token -> 400, not 421 (the Host check passes through nginx).
+#    Same as Step 41, from outside: read the leader token, send it with
+#    the header on stdin (never on the command line).
+TOKEN=$(sudo python3 -c "import json; print(json.load(open('/srv/roundtable/agents.json'))['agents'][0]['token'])")
+printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -s -o /dev/null -w "%{http_code}\n" -X POST https://$PUBLIC_NAME/mcp -H @- -H "Content-Type: application/json" -d '{}'
+unset TOKEN
+#    Expected: 400, not 421.
+
+# 9. Any other path -> 404 (only /mcp is exposed).
 curl -s -o /dev/null -w "%{http_code}\n" https://$PUBLIC_NAME/
 curl -s -o /dev/null -w "%{http_code}\n" https://$PUBLIC_NAME/anything
 #    Expected: 404, 404
 
-# 9. Plain HTTP redirects to HTTPS.
+# 10. Plain HTTP redirects to HTTPS.
 curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://$PUBLIC_NAME/
 #    Expected: 301 https://<your name>/
 
-# 10. The certificate is valid and belongs to your name.
+# 11. The certificate is valid and belongs to your name.
 echo | openssl s_client -connect $PUBLIC_NAME:443 -servername $PUBLIC_NAME 2>/dev/null | openssl x509 -noout -subject -issuer -dates
 #    Expected: subject CN = <your name>, issuer = Let's Encrypt, dates
 #    valid (not expired, about 90 days).
 
-# 11. Port 8000 is not reachable from outside.
+# 12. Port 8000 is not reachable from outside.
 curl --connect-timeout 5 -s -o /dev/null -w "%{http_code}\n" http://$PUBLIC_NAME:8000/mcp || echo "connection refused/timed out (expected)"
 #    Expected: connection refused or timeout — never a 401 or 200.
 ```
