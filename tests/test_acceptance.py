@@ -26,9 +26,9 @@ from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 REPO = Path(__file__).resolve().parent.parent
-LEADER = "tok-test-leader"
-CODER = "tok-test-coder"
-REVIEWER = "tok-test-reviewer"
+LEADER = "leader-test-token-" + "1" * 32
+CODER = "coder-test-token-" + "2" * 32
+REVIEWER = "reviewer-test-token-" + "3" * 32
 
 AGENTS = {
     "agents": [

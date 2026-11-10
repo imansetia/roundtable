@@ -91,8 +91,12 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         if request.url.path.startswith("/mcp"):
-            token = self._extract_token(request.headers.get("authorization"))
-            agent = self._find_agent(token) if token is not None else None
+            try:
+                token = self._extract_token(request.headers.get("authorization"))
+                agent = self._find_agent(token) if token is not None else None
+            except Exception:
+                # Any malformed header / undecodable token is a 401, never a 500.
+                agent = None
             if agent is None:
                 return JSONResponse(
                     {"error": "unauthorized: valid bearer token required"},
@@ -112,8 +116,13 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
         return token.strip()
 
     def _find_agent(self, token: str) -> Agent | None:
+        # Compare as bytes: hmac.compare_digest on str requires ASCII-only
+        # input and raises TypeError on e.g. a non-ASCII bearer token.
+        # Encoding first means any token is comparable and a wrong one
+        # simply does not match (401), never a 500.
+        token_bytes = token.encode("utf-8")
         for agent in self._agents:
-            if hmac.compare_digest(agent.token, token):
+            if hmac.compare_digest(agent.token.encode("utf-8"), token_bytes):
                 return agent
         return None
 
@@ -142,10 +151,18 @@ def create_app(settings: Settings, agents: list[Agent]) -> Starlette:
         if agent is None:
             raise ToolError("unauthenticated: no valid bearer token")
         outcome = "success"
+        audit_task_id = task_id
+        result: Any = None
         try:
             limiter.check(agent.name)
             board.touch_last_seen(agent.name)
-            return fn(agent)
+            result = fn(agent)
+            # AUDIT R6: a tool that creates a task (create_task) has no
+            # task_id argument, so take it from the returned task instead.
+            if audit_task_id is None and isinstance(result, dict):
+                task = result.get("task")
+                if isinstance(task, dict) and isinstance(task.get("id"), int):
+                    audit_task_id = task["id"]
         except ToolError:
             outcome = "error"
             raise
@@ -157,10 +174,11 @@ def create_app(settings: Settings, agents: list[Agent]) -> Starlette:
             raise
         finally:
             try:
-                board.log_audit(agent.name, tool_name, task_id, outcome)
+                board.log_audit(agent.name, tool_name, audit_task_id, outcome)
             except Exception:
                 # Audit failure must not mask the tool's own result.
                 pass
+        return result
 
     def task_payload(task: dict) -> dict:
         return {

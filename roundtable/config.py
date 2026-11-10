@@ -12,7 +12,9 @@ The Owner writes a JSON config file mapping bearer tokens to agents::
 Rules enforced here (fail fast at startup, before the server binds):
 - exactly one agent has role ``leader`` (SPEC section 4);
 - agent names are unique, roles are ``leader`` or ``worker``;
-- every token is non-empty.
+- every token is non-empty, at least 32 characters, and unique across
+  agents (AUDIT-M1 R1: a shared token would silently act as the first
+  agent listed with it).
 
 Tokens live only in this untracked config file (or are passed the same way
 by the Owner). They are never written to the repository, never logged, and
@@ -77,6 +79,7 @@ def load_agents_config(path: str) -> list[Agent]:
 
     agents: list[Agent] = []
     seen_names: set[str] = set()
+    seen_tokens: set[str] = set()
     for entry in raw["agents"]:
         if not isinstance(entry, dict):
             raise ValueError("each entry in 'agents' must be an object")
@@ -96,6 +99,17 @@ def load_agents_config(path: str) -> list[Agent]:
             )
         if not isinstance(token, str) or not token:
             raise ValueError(f"agent {name!r} needs a non-empty 'token'")
+        if len(token) < 32:
+            raise ValueError(
+                f"agent {name!r} token is {len(token)} chars; "
+                "tokens must be at least 32 characters"
+            )
+        if token in seen_tokens:
+            raise ValueError(
+                f"duplicate token in config: the token for agent {name!r} "
+                "is already used by another agent"
+            )
+        seen_tokens.add(token)
         if not isinstance(skills, list) or not all(
             isinstance(s, str) for s in skills
         ):

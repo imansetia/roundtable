@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS agents (
     name TEXT PRIMARY KEY,
     role TEXT NOT NULL CHECK (role IN ('leader', 'worker')),
     skills TEXT NOT NULL DEFAULT '[]',
-    last_seen TEXT
+    last_seen TEXT,
+    active INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,6 +63,11 @@ def connect(db_path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
     conn.commit()
+    # Migration for databases created by M1 (no `active` column yet).
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(agents)")]
+    if "active" not in columns:
+        conn.execute("ALTER TABLE agents ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+        conn.commit()
     return conn
 
 

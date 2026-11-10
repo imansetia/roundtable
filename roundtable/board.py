@@ -24,8 +24,9 @@ Interpretations (documented in CHANGELOG.md, not silent scope changes):
   title/description/message/result but gives no limit for review notes).
 - The spec diagram mentions "leader reassigns" as a claimed -> open path,
   but section 6 defines no reassign tool, so M1 does not add one; a leader
-  can cancel a claimed task and create a replacement instead. This is an
-  open question for the Owner/Auditor (see CHANGELOG.md).
+  can cancel a claimed task and create a replacement instead. Settled by
+  the Auditor's Q1 decision: no reassign tool in v1, cancel + recreate is
+  the intended path (the diagram words were a spec error).
 """
 
 from __future__ import annotations
@@ -41,6 +42,8 @@ DESCRIPTION_MAX = 8_000
 MESSAGE_MAX = 4_000
 RESULT_MAX = 20_000
 REVIEW_NOTE_MAX = 4_000  # see module docstring (deviation, in CHANGELOG.md)
+REQUIRED_SKILL_MAX = 100  # AUDIT R4: was uncapped
+ASSIGNEE_FILTER_MAX = 100  # AUDIT R4: assignee filter in list_tasks
 LIST_LIMIT_DEFAULT = 50
 LIST_LIMIT_MAX = 100
 
@@ -80,12 +83,28 @@ class Board:
         with self._lock:
             for agent in agents:
                 conn.execute(
-                    "INSERT INTO agents (name, role, skills, last_seen) "
-                    "VALUES (?, ?, ?, NULL) "
+                    "INSERT INTO agents (name, role, skills, last_seen, active) "
+                    "VALUES (?, ?, ?, NULL, 1) "
                     "ON CONFLICT(name) DO UPDATE SET role=excluded.role, "
-                    "skills=excluded.skills",
+                    "skills=excluded.skills, active=1",
                     (agent.name, agent.role, skills_to_json(agent.skills)),
                 )
+            # Agents removed from the config stop being listed (AUDIT R3):
+            # mark them inactive, and return their claimed tasks to open
+            # so another worker can claim them. Submitted tasks stay
+            # submitted (the result exists; the leader can still review).
+            names = [a.name for a in agents]
+            placeholders = ",".join("?" for _ in names)
+            conn.execute(
+                f"UPDATE agents SET active = 0 WHERE name NOT IN ({placeholders})",
+                names,
+            )
+            conn.execute(
+                "UPDATE tasks SET status = 'open', assignee = NULL, "
+                "updated_at = ? WHERE status = 'claimed' AND assignee IN "
+                "(SELECT name FROM agents WHERE active = 0)",
+                (_now(),),
+            )
             conn.commit()
 
     # -- helpers ---------------------------------------------------------
@@ -172,7 +191,7 @@ class Board:
     def list_agents(self, agent: Agent) -> dict:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM agents ORDER BY name ASC"
+                "SELECT * FROM agents WHERE active = 1 ORDER BY name ASC"
             ).fetchall()
         return {
             "agents": [
@@ -201,6 +220,7 @@ class Board:
             raise RoundtableError("title must not be empty")
         _check_size("title", title, TITLE_MAX)
         _check_size("description", description or "", DESCRIPTION_MAX)
+        _check_size("required_skill", required_skill or "", REQUIRED_SKILL_MAX)
         if assignee is not None:
             target = self._agents.get(assignee)
             if target is None:
@@ -240,6 +260,8 @@ class Board:
     ) -> dict:
         if status is not None and status not in STATUSES:
             raise RoundtableError(f"unknown status: {status!r}")
+        if assignee is not None:
+            _check_size("assignee", assignee, ASSIGNEE_FILTER_MAX)
         if limit < 1 or limit > LIST_LIMIT_MAX:
             raise RoundtableError(
                 f"limit must be between 1 and {LIST_LIMIT_MAX}"
@@ -247,6 +269,7 @@ class Board:
         if offset < 0:
             raise RoundtableError("offset must be >= 0")
         query = "SELECT * FROM tasks"
+        count_query = "SELECT COUNT(*) FROM tasks"
         clauses: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -256,12 +279,16 @@ class Board:
             clauses.append("assignee = ?")
             params.append(assignee)
         if clauses:
-            query += " WHERE " + " AND ".join(clauses)
+            where = " WHERE " + " AND ".join(clauses)
+            query += where
+            count_query += where
         query += " ORDER BY id ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._lock:
             rows = self._conn.execute(query, params).fetchall()
-            total = self._conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+            total = self._conn.execute(
+                count_query, params[: len(params) - 2]
+            ).fetchone()[0]
         return {
             "tasks": [self._task_dict(r) for r in rows],
             "limit": limit,
@@ -335,7 +362,12 @@ class Board:
             raise RoundtableError("message body must not be empty")
         now = _now()
         with self._lock:
-            self._get_task_row(task_id)  # raises if missing
+            row = self._get_task_row(task_id)  # raises if missing
+            if row["status"] in FINAL_STATUSES:
+                # AUDIT Q4 decision: no messages on done/cancelled tasks.
+                raise RoundtableError(
+                    f"cannot post a message on a {row['status']!r} task"
+                )
             cur = self._conn.execute(
                 "INSERT INTO messages (task_id, author, kind, body, "
                 "created_at) VALUES (?, ?, ?, ?, ?)",
