@@ -27,5 +27,11 @@ dev = [
 [project.scripts]
 roundtable = "roundtable.server:main"
 
+# Explicit package list: setuptools' flat-layout auto-discovery would
+# otherwise see deploy/ (M3 templates) as a second top-level package
+# and refuse to build ("Multiple top-level packages discovered").
+[tool.setuptools]
+packages = ["roundtable"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
