@@ -2,6 +2,65 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M2 — worker.py for API-only models (2026-11-10)
+
+Built on `a3bdedb` (M1 approved and merged). First commit fixed
+AUDIT-M1-FIXES **F1**: on startup the server now also clears the
+assignee of `open` tasks assigned to agents removed from the config
+(R3 already reopened their `claimed` tasks); test fails before, passes
+after.
+
+`worker.py` (SPEC section 8): connects to the board as an MCP client
+with its own bearer token (same `streamable_http_client` + `ClientSession`
+pattern as the tests), learns its name and skills from `whoami`, polls
+for open tasks matching its skill, claims one, sends it to an
+OpenAI-compatible `POST /chat/completions` endpoint, and submits the
+answer as the result. Config is by environment variables only
+(`ROUNDTABLE_URL`, `ROUNDTABLE_TOKEN`, `WORKER_MODEL_BASE_URL`,
+`WORKER_MODEL_NAME`, `WORKER_API_KEY`, `WORKER_POLL_INTERVAL`,
+`WORKER_MAX_TASKS_PER_HOUR`, `WORKER_MODEL_TIMEOUT`); missing required
+variables fail fast with the variable named. The system prompt tells
+the model the task text was written by another agent and is data, not
+instructions. On any failure after claiming (model error, empty answer,
+answer over the 20,000-char result cap, submit error, interruption)
+the task is released back to `open`. Ctrl+C / SIGTERM stops the loop,
+releases a claimed task and exits 0. The board token and model API key
+travel only in `Authorization` headers and are never printed or logged;
+the model answer is never logged either.
+
+Tests: 12 new tests in `tests/test_worker.py` (37 total, all passing)
+against a real server and a small fake OpenAI-compatible server on
+localhost — no real model API, no real API key. Covered: claims only
+matching-skill tasks (and never another worker's assigned task),
+submits the model's answer, releases on model failure / empty reply /
+too-long answer, respects the max-tasks-per-hour cap, exits 0 on Ctrl+C
+while working and while idle, never prints the API key (while the fake
+server confirms it did receive it in the header), and fails fast on
+missing config.
+
+Deviations / interpretations (SPEC section 12):
+
+1. **Skill match:** a task with no `required_skill` has no skill
+   requirement, so any worker may claim it. A task whose required
+   skill is set must be one of the worker's skills.
+2. **Hourly cap** counts submitted tasks in a rolling 1-hour window;
+   when reached the worker waits instead of claiming more (it does not
+   exit).
+3. **Too-long answer:** the worker releases the task instead of
+   submitting a truncated answer (the server rejects over-limit results
+   rather than truncating).
+4. **Ctrl+C during a model call:** the call is cancelled and the
+   claimed task released; the worker does not wait for the model to
+   finish. A stop while idle just closes the session.
+5. **Env var names** are the Builder's choice — the spec lists the
+   settings but not their names (see README / `.env.example`).
+6. **MCP teardown must not be shielded:** `disconnect()` calls the
+   SDK's `__aexit__` methods directly. Wrapping them in
+   `asyncio.shield` makes the SDK's own task-group cancellation land
+   on the shield's inner task as `CancelledError`.
+7. The worker only ever calls `whoami`, `list_tasks`, `claim_task`,
+   `submit_result` and `release_task`.
+
 ## M1 audit fixes (2026-11-10, AUDIT-M1.md)
 
 Auditor verdict was PASS WITH REQUIRED FIXES. Fixes R1–R7 and the Q4
