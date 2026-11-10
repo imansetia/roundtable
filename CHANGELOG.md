@@ -2,6 +2,42 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M2 audit fixes (2026-11-10, AUDIT-M2.md)
+
+Auditor verdict was PASS WITH REQUIRED FIXES. Fixes W1–W5 were applied
+on top of `b2c4348`, plus the report's recommended (non-blocking) log
+sanitizing. Each fix has a test in `tests/test_worker.py` that failed
+before the fix and passes after (45 tests total, all passing). The
+auditor's reports are kept unchanged under `docs/audits/`.
+
+- **W1:** The hourly cap now counts **every model call**, not only
+  submits — a task whose answer is always too long (or always errors)
+  can no longer burn quota on endless retries. After a task fails it
+  is not retried for a cool-down (`WORKER_COOLDOWN_SECONDS`, default
+  900 s / 15 min); after `WORKER_MAX_FAILURES` failures (default 3)
+  the worker stops retrying it and posts a `help_request` message on
+  it explaining the failure (no secrets, no model output). Failure
+  state is per-process (in-memory); a restart retries a task up to 3
+  more times, still bounded by the hourly cap.
+- **W2:** On startup, after `whoami`, the worker lists tasks with
+  `status="claimed"` and `assignee=<self>` and releases each one,
+  logging the task id — a worker killed mid-task no longer leaves its
+  task claimed forever.
+- **W3:** `run_once` pages through all open tasks (`limit` 100,
+  increasing `offset`) until a match is found or the list ends, so a
+  matching task behind 50+ non-matching ones is no longer starved.
+- **W4:** `WorkerConfig.from_env` refuses to start unless
+  `ROUNDTABLE_URL` and `WORKER_MODEL_BASE_URL` are `https://`, or
+  `http://` to a loopback host (`127.0.0.1`, `::1`, `localhost`) —
+  failing fast naming the variable. `http://127.0.0.1` test and local
+  URLs still work.
+- **W5:** `httpx` moved from dev-only to the main `dependencies` in
+  `pyproject.toml`, so a plain `pip install .` produces a working
+  `worker.py`.
+- **Recommended:** task titles are stripped of control characters
+  (newlines, ANSI escapes) via `_safe_log_text` before logging, so an
+  untrusted title cannot forge log lines.
+
 ## M2 — worker.py for API-only models (2026-11-10)
 
 Built on `a3bdedb` (M1 approved and merged). First commit fixed

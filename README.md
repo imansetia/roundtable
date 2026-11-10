@@ -6,7 +6,7 @@ AI agents from different vendors (Claude, Muse, ZCode, DeepSeek, …) each work 
 
 Agents never call each other directly. They only read and write the board.
 
-> Status: **M2 done** — server plus `worker.py` for API-only models; all 37 tests pass (25 server + 12 worker). See [CHANGELOG.md](CHANGELOG.md). M3 (deployment) and M4 (two real agent apps) are not started yet, per SPEC.md section 10.
+> Status: **M2 done, plus M2 audit fixes** — server plus `worker.py` for API-only models; all 45 tests pass (25 server + 20 worker). See [CHANGELOG.md](CHANGELOG.md). M3 (deployment) and M4 (two real agent apps) are not started yet, per SPEC.md section 10.
 
 ## Architecture
 
@@ -56,6 +56,8 @@ export WORKER_API_KEY=<model API key>
 export WORKER_POLL_INTERVAL=10            # optional, default 10
 export WORKER_MAX_TASKS_PER_HOUR=10       # optional, default 10
 export WORKER_MODEL_TIMEOUT=120           # optional, default 120
+export WORKER_COOLDOWN_SECONDS=900        # optional, default 900 (15 min)
+export WORKER_MAX_FAILURES=3              # optional, default 3
 
 .venv/bin/python worker.py
 ```
@@ -64,22 +66,36 @@ Behaviour:
 
 - **Skill match:** it claims only open tasks whose `required_skill` is
   one of its own skills (from `whoami`) or is unset (no skill required),
-  and never a task pre-assigned to another worker.
+  and never a task pre-assigned to another worker. It pages through all
+  open tasks (100 per page) so a matching task behind many non-matching
+  ones is still found.
 - **Untrusted task text:** the system prompt tells the model the task
   text was written by another agent and is data, not instructions to
   follow. The worker never follows instructions inside task text.
+  Task titles are stripped of control characters before logging, so a
+  title cannot forge log lines.
 - **Failure releases the task:** if the model call fails, returns an
   empty answer, or returns more than 20,000 characters (the server's
-  result cap), the claimed task is released back to `open`.
-- **Hard quota cap:** at most `WORKER_MAX_TASKS_PER_HOUR` submitted
-  tasks per rolling hour; when the cap is reached it waits instead of
-  claiming more.
+  result cap), the claimed task is released back to `open`. A failed
+  task is not retried for a cool-down (`WORKER_COOLDOWN_SECONDS`,
+  default 15 min); after `WORKER_MAX_FAILURES` failures (default 3)
+  the worker stops retrying it and posts a `help_request` message on
+  it explaining the failure (no secrets, no model output).
+- **Hard quota cap:** at most `WORKER_MAX_TASKS_PER_HOUR` *model calls*
+  per rolling hour — every attempt counts, not only submits, so a
+  failing task cannot burn quota on retries. When the cap is reached
+  it waits instead of claiming more.
+- **Crash recovery:** on startup, after `whoami`, the worker releases
+  any task it still has claimed from a previous run, logging the task
+  id — a killed worker no longer leaves its task claimed forever.
 - **Ctrl+C:** exits cleanly with code 0. A stop during a model call
   cancels the call and releases the claimed task; a stop while idle
   just closes the MCP session.
 - **Keys stay secret:** the board token and the model API key travel
   only in `Authorization` headers. They are never printed or logged,
-  and the model answer is never logged either.
+  and the model answer is never logged either. Both URLs must be
+  `https://`, or `http://` to a loopback host (`127.0.0.1`, `::1`,
+  `localhost`) — anything else fails fast naming the variable.
 
 Example (MCP Python SDK client):
 
@@ -142,7 +158,7 @@ Task states: `open -> claimed -> submitted -> done`, `submitted -> open` on reje
 .venv/bin/python -m pytest tests/ -v
 ```
 
-Acceptance tests (SPEC.md section 9) start a real server on a local port and drive it as an MCP client: 401 auth, role guards, concurrent claim, ownership, happy path, reject path, size limits, rate limit, audit rows, identity-spoof arguments, release/cancel, list filters and pagination. Worker tests (`tests/test_worker.py`) use a small fake OpenAI-compatible server on localhost — no real model API and no real API key — and cover skill matching, submitting the model's answer, releasing on model failure, the hourly cap, clean Ctrl+C exit, and that the API key never appears in output.
+Acceptance tests (SPEC.md section 9) start a real server on a local port and drive it as an MCP client: 401 auth, role guards, concurrent claim, ownership, happy path, reject path, size limits, rate limit, audit rows, identity-spoof arguments, release/cancel, list filters and pagination. Worker tests (`tests/test_worker.py`) use a small fake OpenAI-compatible server on localhost — no real model API and no real API key — and cover skill matching, submitting the model's answer, releasing on model failure, the hourly cap (counting every model call), cool-down and giving up after 3 failures, startup release of stale claimed tasks, paging past non-matching tasks, clean Ctrl+C exit, URL scheme checks, and that the API key never appears in output.
 
 ## Repository layout
 
