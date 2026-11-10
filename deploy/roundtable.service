@@ -1,0 +1,78 @@
+# Roundtable systemd service (M3). Install with:
+#   sudo cp deploy/roundtable.service /etc/systemd/system/roundtable.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now roundtable
+# Every directive is explained in docs/DEPLOY.md, step "Read the service
+# file before you install it". Nothing here touches Hermes or any other
+# service on the machine.
+
+[Unit]
+Description=Roundtable MCP server
+Documentation=https://github.com/imansetia/roundtable/blob/main/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=roundtable
+Group=roundtable
+WorkingDirectory=/srv/roundtable/app
+# EnvironmentFile holds the real settings (paths, allowed hosts, rate
+# limit). It must exist before the service starts; systemd reads it, the
+# app never reads the file itself. Mode 600, owned by roundtable.
+EnvironmentFile=/srv/roundtable/roundtable.env
+ExecStart=/srv/roundtable/venv/bin/python -m roundtable
+Restart=on-failure
+RestartSec=5
+# Files the service creates (the SQLite database) are owner-only.
+UMask=0077
+
+# --- Memory safety (the VM has ~836 MiB total, ~320 MiB free) -----------
+# Kill this service if it ever grows past 200 MiB, instead of letting it
+# eat RAM Hermes needs. Measured use is ~70 MiB, so 200 MiB is about 3x
+# headroom. If the kernel itself runs out of RAM, prefer killing
+# Roundtable (score 500) over Hermes (default 0): higher score = killed
+# first. MemoryAccounting lets `systemctl status` show the live use.
+MemoryAccounting=true
+MemoryMax=200M
+OOMScoreAdjust=500
+
+# --- Sandboxing -----------------------------------------------------------
+# NoNewPrivileges: the process can never gain privileges, even if it
+# somehow executed a setuid program.
+NoNewPrivileges=true
+# ProtectSystem=strict: the whole filesystem is read-only for this
+# process, except the paths listed in ReadWritePaths below.
+ProtectSystem=strict
+# The only writable path: the data directory (database + WAL files).
+ReadWritePaths=/srv/roundtable/data
+# No access to /home at all (Hermes and the operator live there).
+ProtectHome=true
+# Private /tmp, separate from everyone else's.
+PrivateTmp=true
+# No access to hardware devices.
+PrivateDevices=true
+# Cannot change kernel tunables, load kernel modules, or touch cgroups.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# Cannot change the hostname, the clock, or read kernel logs.
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelLogs=true
+# Cannot use personality(2) to change how the kernel treats the process.
+LockPersonality=true
+# No SysV shared memory / semaphores left behind after a crash.
+RemoveIPC=true
+# Drop every Linux capability: binding to 127.0.0.1:8000 needs none
+# (only ports below 1024 need privileges).
+CapabilityBoundingSet=
+# Only Unix, IPv4 and IPv6 sockets; no raw/packet sockets.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Only the syscalls a normal network service needs. Anything else is
+# refused with EPERM instead of running.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

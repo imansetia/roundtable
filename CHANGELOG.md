@@ -2,6 +2,108 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M3 — deployment guide (2026-11-10)
+
+Deployment guide for HermesVM (Ubuntu 24.04, Azure), written for a
+beginner Owner: `docs/DEPLOY.md` (47 steps, one command per step, each
+with what it does, expected output and how to undo it) plus templates
+under `deploy/` (systemd unit, two-phase nginx site files, example
+EnvironmentFile). Nothing has been exposed to the internet: the Owner
+runs the guide only after the Auditor approves it, and the guide's
+Part 11 is the verification checklist the Auditor runs on the VM.
+
+**Code change (the only server change in M3):** new setting
+`ROUNDTABLE_ALLOWED_HOSTS` (comma-separated, in `Settings` /
+`roundtable/config.py`, wired through `transport_security_settings` in
+`roundtable/server.py`). The MCP SDK 2.3.0 enables DNS-rebinding
+protection with a loopback-only allow-list, so behind nginx a request
+whose Host is the public DNS name was rejected with 421 (probed live:
+valid token + public Host -> 421; valid token + loopback Host -> 400).
+The setting adds public names to the loopback list; it never disables
+the protection and never removes loopback. A bare `*` is rejected at
+startup. 3 new tests in `tests/test_allowed_hosts.py` failed before
+the change and pass after (48 tests total, all passing). The tests also
+document two SDK behaviours: bare loopback Hosts without a port are
+rejected by the SDK's own `:*` patterns, and auth (401) answers before
+the Host check (421) for requests without a token.
+
+**Design choices (see DEPLOY.md for the full reasoning):**
+- The app keeps binding to 127.0.0.1:8000; only nginx listens publicly.
+- Own system user `roundtable` (no login shell, no sudo), own
+  directories under `/srv/roundtable`, own venv; no system-wide Python
+  packages. `agents.json` and the EnvironmentFile are mode 600, owned
+  by the service user, outside the git checkout. Tokens are generated
+  straight into the file by a Python one-liner, never typed, never in
+  shell history.
+- The venv is owned by the operator, not the service user: pip needs
+  to write build artifacts into the checkout during install, which the
+  service user cannot do; the service only reads the venv at runtime
+  (and cannot write to it under ProtectSystem=strict anyway). Found by
+  testing the guide's steps live in a matching Ubuntu 24.04 VM.
+- `MemoryMax=200M` (measured server RSS ~70 MiB, so ~3x headroom) and
+  `OOMScoreAdjust=500`, so the kernel kills Roundtable before Hermes if
+  RAM runs out. Expected new RAM: ~70–120 MiB for the app, ~10–20 MiB
+  for nginx, ~0 for idle certbot; the guide measures it after install.
+- systemd hardening: NoNewPrivileges, ProtectSystem=strict with
+  ReadWritePaths only for the data dir, ProtectHome, PrivateTmp, plus
+  PrivateDevices, ProtectKernelTunables/Modules/ControlGroups,
+  ProtectHostname/Clock/KernelLogs, LockPersonality, RemoveIPC, an
+  empty CapabilityBoundingSet, RestrictAddressFamilies and
+  SystemCallFilter=@system-service. Each line is explained in the
+  guide. The hardening was verified live: the unit was run under
+  systemd in a matching Ubuntu 24.04 VM and the server started, served
+  requests and stopped cleanly (see test output below).
+- HTTPS via certbot `--webroot` (not the nginx plugin, so the
+  hand-written site file is never auto-edited), two-phase nginx site
+  (HTTP-only for the ACME challenge, then the full HTTPS site), HTTP
+  redirects to HTTPS, only `/mcp` exposed (everything else 404),
+  `proxy_buffering off`, 300 s read/send timeouts, `client_max_body_size
+  256k` (largest legitimate input is a 20,000-char result, ~25 KB
+  typical, ~120 KB worst-case escaped Unicode), default combined access
+  log (never records Authorization), TLS 1.2/1.3 + modern ciphers, HSTS
+  without preload, automatic renewal via the certbot timer plus a
+  dry-run check.
+- Firewall: ufw adds only 80/tcp and 443/tcp (v4 + v6); the
+  SSH-over-Tailscale rule is never touched. The matching Azure NSG
+  inbound rules are documented for the Portal; SSH stays closed
+  publicly and port 8000 is never opened.
+- Rate limiting stays per token (60/minute, server-side, unchanged —
+  nginx only forwards the Authorization header). An optional coarse
+  per-IP nginx limit (10 req/s, burst 20) is a second layer.
+- SQLite backup via `sqlite3 .backup` (safe on a live database),
+  backup files mode 600, with a restore procedure. Updating, rollback
+  (by recorded commit) and a full uninstall (removes only Roundtable's
+  files, user, unit, nginx site, certificate and the two firewall
+  rules) are documented.
+
+**Deviations from SPEC.md:**
+- SPEC section 11's layout does not list `docs/DEPLOY.md` or `deploy/`:
+  M3 adds them (the section 10 milestone is "Deployment guide", so the
+  files are the deliverable, not a layout change).
+- SPEC section 7.5 (bind 127.0.0.1) is kept; the allowed-hosts setting
+  is a new env var, not a spec change — it only extends the SDK's own
+  host allow-list for the proxy case.
+- The nginx site is shipped as two files (HTTP-only phase 1, full HTTPS
+  phase 2) instead of one, because certbot webroot needs nginx serving
+  the ACME challenge before the certificate exists, and the full site
+  cannot pass `nginx -t` until the certificate files exist.
+
+**Open questions (for the Owner / Auditor):**
+- The exact DNS label and region (`<label>.<region>.cloudapp.azure.com`)
+  — the Owner fills these in at Step 0.
+- Should a daily backup run automatically (systemd timer) or stay
+  manual (Step 42)? The guide documents manual backups only.
+- Hermes is checked by process name and port 51909 in the guide,
+  because its systemd unit name was not provided — the Auditor should
+  confirm that check is sufficient (or supply the unit name).
+- `WORKER_MAX_TASKS_PER_HOUR` counts model calls, not tasks
+  (AUDIT-M2-FIXES N2): consider renaming to
+  `WORKER_MAX_MODEL_CALLS_PER_HOUR` before a 1.0 release. No rename in
+  M3.
+- `worker.py` is not deployed on the VM in M3 (server only), per the
+  VM facts. When a worker is deployed, it must use its own token
+  (README, AUDIT-M2-FIXES N1).
+
 ## M2 audit fixes (2026-11-10, AUDIT-M2.md)
 
 Auditor verdict was PASS WITH REQUIRED FIXES. Fixes W1–W5 were applied
