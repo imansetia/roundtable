@@ -52,7 +52,14 @@ the Host check (421) for requests without a token.
   SystemCallFilter=@system-service. Each line is explained in the
   guide. The hardening was verified live: the unit was run under
   systemd in a matching Ubuntu 24.04 VM and the server started, served
-  requests and stopped cleanly (see test output below).
+  requests (401 without a token, 400 with a token, 400 for the
+  configured public Host, 421 for an unlisted Host) and stopped
+  cleanly, as the `roundtable` user, RSS ~70 MiB, listening on
+  127.0.0.1:8000 only, with MemoryMax=209715200 and OOMScoreAdjust=500
+  confirmed via `systemctl show`. (That VM is a container without the
+  cgroup memory controller, so the live `MemoryCurrent` reading was
+  unavailable there; the guide measures memory with `ps`, which works
+  everywhere.)
 - HTTPS via certbot `--webroot` (not the nginx plugin, so the
   hand-written site file is never auto-edited), two-phase nginx site
   (HTTP-only for the ACME challenge, then the full HTTPS site), HTTP

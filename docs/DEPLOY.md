@@ -693,11 +693,15 @@ mean the Host check rejected you (wrong allowed-hosts setting).
 **Command:**
 
 ```bash
-systemctl status roundtable --no-pager | grep -i memory; ps -o pid,rss,comm -u roundtable; free -h
+ps -o pid,rss,comm -u roundtable; systemctl show roundtable -p MemoryMax; free -h
 ```
 
-**What it does:** shows the service's memory use from systemd, the
-process's RSS (resident memory), and the VM's free memory.
+**What it does:** shows the service's process and its RSS (resident
+memory) — the reliable measurement — confirms the 200 MiB cap is set
+(`MemoryMax=209715200` bytes), and shows the VM's free memory. On a
+normal VM, `systemctl status roundtable` also shows a `Memory:` line
+(the unit turns memory accounting on); if that line is empty, the `ps`
+line above is the measurement — the cap is still enforced.
 
 **Expected:** the service uses about **70–120 MiB** (RSS around
 70,000 KB). nginx is not running yet, so `free` should still show
@@ -1220,10 +1224,12 @@ the deployment is considered done.
 
 ```bash
 # 1. Service is running, as the service user, memory within the cap.
-systemctl status roundtable --no-pager | grep -E 'Active:|Memory:'
+systemctl status roundtable --no-pager | grep -E 'Active:'
 ps -o pid,user,rss,comm -u roundtable
-#    Expected: Active: active (running); Memory: ~70-120M; one python
-#    process owned by roundtable.
+systemctl show roundtable -p MemoryMax
+#    Expected: Active: active (running); one python process owned by
+#    roundtable, RSS ~70-120M; MemoryMax=209715200. (On a normal VM,
+#    `systemctl status` also shows a Memory: line.)
 
 # 2. The app listens on loopback only; nginx on 80/443; nothing on 8000
 #    from outside the VM.
