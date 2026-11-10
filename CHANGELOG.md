@@ -97,9 +97,17 @@ service active, `MemoryMax=209715200`, `MemorySwapMax=0`,
 `OOMScoreAdjust=500` confirmed via `systemctl show`; requests 401
 without a token, 400 with a token and the configured (lowercase) Host
 from an uppercase env value, 421 for an unlisted Host; RSS ~70 MiB;
-clean stop; sandbox deployment fully removed afterwards. Full suite:
-**61 passed**. The two flaky M2 worker tests noted in the audit did
-not fail in this run.
+clean stop; sandbox deployment fully removed afterwards. Real
+`nginx -t` was run this time (nginx 1.24.0, the VM's version,
+downloaded from archive.ubuntu.com after the sandbox's apt mirror
+proved unusable): both site files pass with the real public name
+`roundtable-k7q2.eastasia.cloudapp.azure.com` — only the certificate
+and log paths were redirected to scratch dirs for the test, and the
+catch-all servers, 180 s timeouts and `ssl_reject_handshake` were all
+in the tested files. Certbot 2.9.0's own source was checked and
+`--deploy-hook` is a real flag stored in the renewal config. Full
+suite: **61 passed**. The two flaky M2 worker tests noted in the
+audit did not fail in this run.
 
 ## M3 — deployment guide (2026-11-10)
 
