@@ -93,6 +93,10 @@ class Board:
             # mark them inactive, and return their claimed tasks to open
             # so another worker can claim them. Submitted tasks stay
             # submitted (the result exists; the leader can still review).
+            # AUDIT-M1-FIXES F1: the same applies to open tasks that were
+            # pre-assigned to a removed agent — clear the assignee too,
+            # or the task would stay open forever with nobody able to
+            # claim it.
             names = [a.name for a in agents]
             placeholders = ",".join("?" for _ in names)
             conn.execute(
@@ -101,7 +105,8 @@ class Board:
             )
             conn.execute(
                 "UPDATE tasks SET status = 'open', assignee = NULL, "
-                "updated_at = ? WHERE status = 'claimed' AND assignee IN "
+                "updated_at = ? WHERE status IN ('open', 'claimed') "
+                "AND assignee IN "
                 "(SELECT name FROM agents WHERE active = 0)",
                 (_now(),),
             )

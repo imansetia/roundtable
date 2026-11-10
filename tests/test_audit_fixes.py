@@ -306,6 +306,39 @@ def test_r3_removed_agent_disappears_and_claimed_task_reopens(tmp_path):
         stop_server(proc)
 
 
+# -- F1: open task pre-assigned to a removed agent must not get stuck ---
+
+def test_f1_open_task_preassigned_to_removed_agent_gets_unassigned(tmp_path):
+    tmp = tmp_path
+    port = free_port()
+    proc, url, _ = start_server(tmp, port, AGENTS)
+    try:
+        # Leader pre-assigns the task to coder; it stays open, unclaimed.
+        task = make_task(url, "F1 task", assignee="coder")
+        assert task["status"] == "open" and task["assignee"] == "coder"
+    finally:
+        stop_server(proc)
+
+    # Restart with coder removed from the config (same DB file).
+    agents_v2 = {"agents": [
+        {"name": "planner", "role": "leader", "skills": ["planning"], "token": LEADER},
+        {"name": "reviewer", "role": "worker", "skills": ["review"], "token": REVIEWER},
+    ]}
+    port2 = free_port()
+    proc, url2, _ = start_server(tmp, port2, agents_v2)
+    try:
+        err, data = call(url2, LEADER, "get_task", {"task_id": task["id"]})
+        assert not err
+        assert data["task"]["status"] == "open"
+        assert data["task"]["assignee"] is None
+        # Another worker can now claim it.
+        err, data = call(url2, REVIEWER, "claim_task", {"task_id": task["id"]})
+        assert not err, f"claim failed: {data}"
+        assert data["task"]["assignee"] == "reviewer"
+    finally:
+        stop_server(proc)
+
+
 # -- R4: required_skill and assignee filter capped at 100 chars ----------
 
 def test_r4_required_skill_capped_at_100(server):
