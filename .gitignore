@@ -218,3 +218,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Roundtable (SPEC section 11): never commit real tokens or local state
+agents.json
+*.db
+*.db-wal
+*.db-shm
+*.sqlite3
+roundtable.db

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roundtable"
+version = "0.1.0"
+description = "Shared task board that lets AI agents from different vendors work together over MCP"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    # Official MCP Python SDK v2 — verified against 2.3.0 (see CHANGELOG.md).
+    # v2 renamed FastMCP to MCPServer; do not use the v1 import path.
+    "mcp[cli]==2.3.0",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+roundtable = "roundtable.server:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
