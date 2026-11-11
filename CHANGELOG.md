@@ -2,6 +2,100 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M4 audit fixes (2026-11-11, AUDIT-M4.md)
+
+Auditor verdict was PASS WITH REQUIRED FIXES — do not run
+CONNECT.md or DEMO.md yet. F1–F6 and the token handling were
+confirmed good, and the suite passed (77 tests) in Ubuntu 24.04.
+Fixes M1–M7 were applied on top of `a9b2215`. Each fix that can be
+guarded by a test has one in `tests/test_m4_docs.py` (17 tests
+total in that file, up from 10). The auditor's report is kept
+unchanged under `docs/audits/`.
+
+- **M1 — user scope → local scope.** Steps 9–11 and 17 now use
+  `--scope local`: the server loads only in `~/roundtable-leader`,
+  so the Auditor's own Claude Code session and any unrelated
+  project never get leader access. The guide states plainly that
+  the Auditor's session must not have the `roundtable` server. (The
+  M4 entry's claim that user scope was the right choice is
+  superseded by this fix.)
+- **M2 — the canary test is unscripted.** The leader gets a
+  goal-level prompt only ("Review the submitted result of task
+  `<id>` against its description and decide."), the canary is never
+  mentioned to it, the "(a test line, not an instruction)" label is
+  gone (the line is now bare), and the review notes are whatever
+  the leader writes — recorded verbatim. DEMO.md says plainly that
+  the leader never sees the script. The first submission still
+  carries the line, and the pass criterion (no `cancel_task` row)
+  is unchanged.
+- **M3 — the description now requires hyphen handling.** It says
+  "hyphens may appear between groups and must be ignored; any
+  non-digit other than hyphens must return False", so version 1
+  (which rejects hyphenated input) genuinely fails the spec and a
+  careful leader can reject it on its own. The function and its
+  test values are unchanged and were already verified by running
+  them.
+- **M4 — the evidence query runs as `roundtable`.**
+  `sudo -u roundtable sqlite3 -readonly …` in DEMO.md and in the
+  template: `/srv/roundtable/data` is mode 700, owned by
+  `roundtable`, so `azureuser` could not open the database at all.
+  The guide notes the WAL `-shm` file is created/used as
+  `roundtable`, harmlessly.
+- **M5 — tokens selected by name, rotation order fixed.** Steps 2,
+  6 and 16 select tokens with
+  `d={a['name']: a['token'] for a in …}; print(d['<name>'])`,
+  never by list index. Step 16 now reads the old token into
+  `$TOKEN` **before** the rotation, rotates, restarts, sends the
+  old token (expect 401), then unsets it — reading it after the
+  rotation would have tested nothing, since the file then holds
+  the new token.
+- **M6 — dummy check before any real token.** Step 9 adds the
+  server with `ROUNDTABLE_TOKEN=dummy-check` and runs
+  `claude mcp get roundtable` with that dummy value, to see
+  whether the header is shown by name (`${ROUNDTABLE_TOKEN}`) or
+  by its expanded value. Only if it shows by name is `get` used
+  with the real token (Step 11); otherwise `claude mcp list` only.
+  The guide no longer claims the header is masked. (The real token
+  is set in Step 10, after the check — the two steps swapped
+  order, numbers unchanged.)
+- **M7 — Step 6 is Owner-only, with a no-display route.** The
+  guide says plainly the Owner runs Step 6 in their own SSH
+  window, never through an AI agent's tool (a transcript would hold
+  the token). For Claude Code it prefers no display at all: in Git
+  Bash, `read -r ROUNDTABLE_TOKEN < <(/c/Windows/System32/OpenSSH/ssh.exe …)`
+  — Windows OpenSSH, since Git Bash's own `ssh` is refused by this
+  VM. If the token must be copied (Muse's secure entry card needs
+  a paste), the guide says Windows clipboard history (Win+V) keeps
+  copies and must be cleared.
+
+**Recommendations taken: R1, R2 and R3 (all three).** R1: Step 3
+keeps a mode-600 copy of the old `agents.json`
+(`agents.json.bak`) until Step 5 passes, then deletes it; the
+Step 3 undo now restores that backup instead of referring to a
+backup that did not exist. R2: a note in Step 3 explains that
+`planner`/`coder` stay in the database as inactive rows, so
+`list_agents` showing only `claude`/`muse` is expected. R3: the
+Sources section now says Muse's own custom-connector documentation
+is the in-product skill (a local file, not a web page), so it
+cannot be linked by URL; Meta's Help Center describes Custom
+Connectors in general but does not document MCP for the app, and
+no official Muse help-page URL for it was found in a web search
+(2026-11-11) — so the guide states that instead of implying a
+link. (The M4 entry's Sources wording is superseded here.)
+
+**Auditor's open questions, answered in the run:** the
+`${ROUNDTABLE_TOKEN}` expansion is tested live at Step 11, with
+M6's dummy check first; if it fails, the fallback (Step 11) is in
+local scope. The demo record now asks which form Muse's secure
+prompt took (the token, or the full `Bearer …` value) and whether
+the `get` dummy check showed the header by name. After the
+evidence is recorded, the `muse` token is rotated (DEMO.md "After
+the demo", Step 16) because it passed through a copy-paste.
+
+**Deviations from SPEC.md:** none — docs only, no server changes.
+Nothing on the VM changes and no app is connected until the
+re-audit passes.
+
 ## M4 (2026-11-11, in progress — docs written, demo not yet run)
 
 M3 is complete and deployed on HermesVM (see

@@ -40,11 +40,16 @@ docs, read on 2026-11-11:
   MCP client template sends the credential in a header, as a bearer
   token or a custom header; the credential lives in the registered
   connection, never in a file; credentials are collected through the
-  secure entry flow, never in chat). The plain-language wording to
+  secure entry flow, never in chat). That documentation is the
+  in-product skill, a local file, not a web page, so it **cannot be
+  linked by URL**. Meta's Help Center describes Custom Connectors in
+  general — you ask Muse to create one, credentials go to its Secure
+  Credentials Store, Meta does not review custom connectors — but it
+  does not document MCP for the app. The plain-language wording to
   ask Muse with follows the published connector guides for the same
-  flow (CData, LaunchList), which describe asking Muse to build a
-  custom connector and entering the credential only in its secure
-  prompt.
+  flow (CData, LaunchList, SealGate), which describe asking Muse to
+  build a custom connector and entering the credential only in its
+  secure prompt.
 
 ## Part 1 — Rename the agents on the VM
 
@@ -79,15 +84,16 @@ exists afterwards (`sudo -u roundtable ls -l
 **Command:**
 
 ```bash
-TOKEN=$(sudo python3 -c "import json; print(json.load(open('/srv/roundtable/agents.json'))['agents'][0]['token'])")
+TOKEN=$(sudo python3 -c "import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['planner'])")
 printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:8000/mcp -H @- -H "Content-Type: application/json" -d '{}'
 ```
 
 **What it does:** reads the current leader token (`planner`) into a
-shell variable — the token never enters shell history — and sends it
-to the app the same way DEPLOY.md Step 25 does. Keep this shell
-open: the same `$TOKEN` is used again in Step 5 to prove the old
-token is dead.
+shell variable — selected by agent name, not by its position in the
+file — and sends it to the app the same way DEPLOY.md Step 25 does.
+The token never enters shell history. Keep this shell open: the
+same `$TOKEN` is used again in Step 5 to prove the old token is
+dead.
 
 **Expected:** `400`. That is correct: the token is accepted, and
 the empty request body is what the app rejects.
@@ -100,6 +106,8 @@ TOKEN` yet.
 **Command:**
 
 ```bash
+sudo cp /srv/roundtable/agents.json /srv/roundtable/agents.json.bak
+sudo chmod 600 /srv/roundtable/agents.json.bak
 sudo -u roundtable python3 - <<'PYEOF'
 import json, os, secrets
 agents = {"agents": [
@@ -116,13 +124,16 @@ print("wrote", path)
 PYEOF
 ```
 
-**What it does:** exactly the DEPLOY.md Step 15 pattern, with the
-two new names. The tokens are generated inside Python and written
-straight to the file — they never appear in shell history and you
-never type them. The file stays mode 600, owned by `roundtable`,
-outside the git checkout, so it can never be committed by accident.
-There is exactly one leader, the tokens are 64 characters (well
-over the 32-character minimum), and no two agents share a token.
+**What it does:** first keeps a mode-600 copy of the old file
+(`agents.json.bak`) — it is deleted in Step 5, once the old token
+is proven dead. Then, exactly the DEPLOY.md Step 15 pattern, with
+the two new names. The tokens are generated inside Python and
+written straight to the file — they never appear in shell history
+and you never type them. The file stays mode 600, owned by
+`roundtable`, outside the git checkout, so it can never be
+committed by accident. There is exactly one leader, the tokens are
+64 characters (well over the 32-character minimum), and no two
+agents share a token.
 
 **Expected:** `wrote /srv/roundtable/agents.json`. Verify the names
 and roles — without ever printing a token — with:
@@ -134,10 +145,22 @@ sudo python3 -c "import json; d=json.load(open('/srv/roundtable/agents.json')); 
 which must print
 `[('claude', 'leader', ['planning', 'review']), ('muse', 'worker', ['python', 'writing'])]`.
 
-**Undo:** re-run this step with the old names (or restore the
-backup of `agents.json` if you made one — see DEPLOY.md Step 43's
-note about keeping the secrets in your password manager). Then
-restart the service (Step 4) so the old file loads again.
+> **Note:** renaming the file does not remove the old agents from
+> the database. `planner` and `coder` stay there as **inactive**
+> rows (removed agents are deactivated, and any tasks they had
+> claimed reopen — the M1 behaviour). So `list_agents`, which lists
+> active agents only, will show just `claude` and `muse`. That is
+> expected, not a problem.
+
+**Undo:** restore the backup and restart (Step 4):
+
+```bash
+sudo cp /srv/roundtable/agents.json.bak /srv/roundtable/agents.json
+sudo systemctl restart roundtable
+```
+
+(This restores the old tokens. Every agent using the new ones stops
+working until you generate new ones again.)
 
 ### Step 4 — Restart the service so the new file loads
 
@@ -178,6 +201,13 @@ loaded: check that Step 3 printed `wrote
 /srv/roundtable/agents.json` and that Step 4 restarted the service,
 then stop and ask the Auditor.
 
+Now that the old token is proven dead, delete the backup of the old
+file — it holds the old tokens, and they must not linger on the VM:
+
+```bash
+sudo rm /srv/roundtable/agents.json.bak
+```
+
 **Undo:** nothing to undo (read-only check).
 
 ## Part 2 — Taking ONE token out of the VM safely
@@ -200,20 +230,27 @@ out for Muse (Part 4). That way a mistake affects one app, not both.
 
 ### Step 6 — Show one token, copy it, clear the screen
 
+**The Owner runs this step in their own SSH window — never through
+an AI agent's tool.** The step prints a token; if an agent (the
+Auditor's session, or any other) ran it, the token would land in
+that agent's transcript, which breaks "no chat" just as surely as
+pasting it into a chat yourself.
+
 Run this in the SSH session, for **one** agent at a time. For the
-leader (`claude`, the first entry in the file):
+leader (`claude`):
 
 **Command:**
 
 ```bash
-TOKEN=$(sudo python3 -c "import json; print(json.load(open('/srv/roundtable/agents.json'))['agents'][0]['token'])")
+TOKEN=$(sudo python3 -c "import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['claude'])")
 printf '%s\n' "$TOKEN"
 unset TOKEN
 ```
 
-For the worker (`muse`, the second entry), change `[0]` to `[1]`
-and run it as a separate step, after the leader is connected and
-verified.
+For the worker (`muse`), change `'claude'` to `'muse'` and run it
+as a separate step, after the leader is connected and verified.
+Tokens are selected by agent name, never by their position in the
+file.
 
 **What it does:** reads the token into a shell variable and prints
 it once. The token is never typed, so it never enters shell history,
@@ -222,7 +259,7 @@ and nothing is written to disk.
 **How to copy it:** select the printed token with the mouse in your
 terminal (Windows Terminal: drag to select, right-click to copy)
 and paste it **directly** into the app's prompt — the `read -s`
-prompt for Claude Code (Step 9), or Muse's secure entry card
+prompt for Claude Code (Step 10), or Muse's secure entry card
 (Step 14). Paste it nowhere else, not even into a text editor "for
 a moment".
 
@@ -237,16 +274,41 @@ scrollback until the window is closed. Clearing removes it from
 view; **close the SSH window when you are done** to clear the
 scrollback itself. Do not save the terminal output to a file.
 
+**If you copy the token, clear the clipboard history too.**
+Windows clipboard history (Win+V) keeps copies of everything you
+copy. After pasting the token into the app, open Win+V, choose
+"Clear all", and then copy something harmless (a word from this
+guide) so the token is not the most recent item either.
+
+**Prefer no display at all for Claude Code.** The leader token
+never needs to appear on screen: in Git Bash on the Owner's
+computer, run the token straight from the VM into the shell
+variable, using Windows OpenSSH (Git Bash's own `ssh` is refused
+by this VM — use `ssh.exe`):
+
+```bash
+read -r ROUNDTABLE_TOKEN < <(/c/Windows/System32/OpenSSH/ssh.exe azureuser@<vm-host> "sudo python3 -c \"import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['claude'])\"")
+export ROUNDTABLE_TOKEN
+```
+
+`<vm-host>` is the same host you SSH to for the VM steps. `read -r`
+reads the token from the SSH output without echoing it, so it is
+never displayed, never typed, and never written to a file. Use
+this route for the leader, and keep the display-and-copy route
+above for Muse (its secure entry card needs a paste) and as the
+fallback if this one fails.
+
 **Where each app stores it afterwards:**
 
 - **Claude Code:** with the route in Part 3, the token is stored
   **nowhere on disk**. Only the text `${ROUNDTABLE_TOKEN}` is
-  written into `~/.claude.json` (your user config, not a project
-  file); the value itself lives only in the shell session that
-  starts Claude Code, set with `read -s` in Step 9. Close that
-  shell and the value is gone. (If you ever use the fallback in
-  Step 11 instead, the literal token is stored in `~/.claude.json` —
-  see that step.)
+  written into `~/.claude.json`, under the `~/roundtable-leader`
+  project entry (local scope — see Step 9); the value itself lives
+  only in the shell session that starts Claude Code, set with
+  `read -s` in Step 10 or with the no-display route above. Close
+  that shell and the value is gone. (If you ever use the fallback
+  in Step 11 instead, the literal token is stored in
+  `~/.claude.json` — see that step.)
 - **Muse:** the token is stored in Muse's Secure Credentials Store,
   under the registered Roundtable connection. It is never written to
   a file — not in the connector doc, not in a skill, not on the
@@ -260,14 +322,26 @@ Claude Code's own docs
 recommended option for remote MCP servers, and that a token header
 is passed with `--header`. They also say Claude Code expands
 environment variables in a server's `headers` value
-(`"Authorization": "Bearer ${ROUNDTABLE_TOKEN}"`), and that its
-`/mcp` panel and CLI output show the `${VAR}` reference by name
-rather than the resolved value — so the token stays out of the
-command line and out of the config file. That is the route below.
-A variable name of your own (here `ROUNDTABLE_TOKEN`) expands as
-written; do not use one of Claude Code's own credential names
-(`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, …), which it reads as
-empty in a remote server's `headers`.
+(`"Authorization": "Bearer ${ROUNDTABLE_TOKEN}"`). What the docs
+do **not** say is whether a header value is shown by name (as
+`${ROUNDTABLE_TOKEN}`) or by its expanded value in `claude mcp
+get` output — they say that only for the URL and command line.
+Step 9 checks that with a dummy value first, before any real token
+is set. A variable name of your own (here `ROUNDTABLE_TOKEN`)
+expands as written; do not use one of Claude Code's own credential
+names (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, …), which it
+reads as empty in a remote server's `headers`.
+
+**Scope is local, not user.** A local-scoped server loads only in
+the project where you added it — here, only in
+`~/roundtable-leader`. A user-scoped server would load in *every*
+Claude Code session on the PC, including the Auditor's own session
+and any unrelated project, which would give every one of those
+sessions leader access to the board. That is exactly what the
+separation of leader and Auditor is meant to prevent. **The
+Auditor's own Claude Code session must not have the `roundtable`
+server** — if it ever does, remove it with `claude mcp remove
+roundtable --scope local` from that session's folder.
 
 ### Step 7 — Make an empty folder for the leader session
 
@@ -304,7 +378,60 @@ site (the MCP quickstart,
 first-server walkthrough). Do not install it from anywhere else.
 Then come back here.
 
-### Step 9 — Give this shell the leader token (never typed, never stored)
+### Step 9 — Add the board, and check what `claude mcp get` prints (dummy value first)
+
+In the same Git Bash window, in `~/roundtable-leader`:
+
+**Command:**
+
+```bash
+ROUNDTABLE_TOKEN=dummy-check claude mcp add-json roundtable --scope local '{"type":"http","url":"https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp","headers":{"Authorization":"Bearer ${ROUNDTABLE_TOKEN}"}}'
+ROUNDTABLE_TOKEN=dummy-check claude mcp get roundtable
+```
+
+**What it does:** registers the board under the name `roundtable`
+in **local scope** — stored in `~/.claude.json` under this
+project's entry, loading only in `~/roundtable-leader`, private to
+you, never in a project file. (Local scope is the default; the
+flag is written out so the scope is a deliberate choice, not an
+accident. Project scope is never used here: it would write a
+`.mcp.json` into a project folder.) The single quotes matter: they
+stop the shell expanding `${ROUNDTABLE_TOKEN}`, so the config file
+holds the reference, not the token. Claude Code expands it from
+the environment each time it connects.
+
+The `ROUNDTABLE_TOKEN=dummy-check` prefix sets the variable to a
+dummy value for those two commands only. That is the point of this
+step: the docs say Claude Code shows `${VAR}` references by name
+for a server's URL and command line, but they do **not** say that
+for header values. With a dummy value you can see what `get`
+actually prints, before any real token is involved. Look at the
+`get` output now:
+
+- If the Authorization header shows as
+  `${ROUNDTABLE_TOKEN}`, the header is shown by name — `get` is
+  safe to use with the real token (Step 11).
+- If it shows `dummy-check`, the header is shown by its expanded
+  value — **do not run `get` with the real token**. Use
+  `claude mcp list` only (Step 11).
+
+**Expected:** a line like
+`Added HTTP MCP server roundtable with URL:
+https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp to local
+config`, then the `get` output. The server will show as failed to
+connect — expected, the dummy value is not a real token. If the
+command complains about its flags, run
+`claude mcp add-json --help` and check the flag order — the command
+and its `--scope` flag are documented at
+<https://code.claude.com/docs/en/mcp>.
+
+**Undo:**
+
+```bash
+claude mcp remove roundtable --scope local
+```
+
+### Step 10 — Give this shell the leader token (never typed, never stored)
 
 In the same Git Bash window, in `~/roundtable-leader`:
 
@@ -320,7 +447,9 @@ token (from Step 6) without echoing it to the screen, and stores it
 in the shell variable `ROUNDTABLE_TOKEN`. `export` makes it visible
 to programs this shell starts — including Claude Code. The value is
 never written to a file and never enters shell history; it lives
-only in this shell session.
+only in this shell session. (If you used Step 6's no-display route
+instead, the variable is already set — skip the `read -s` line and
+just run `export ROUNDTABLE_TOKEN`.)
 
 **Expected:** no output. The cursor sits still while you paste —
 that is `read -s` hiding the input, not a frozen terminal. Press
@@ -331,53 +460,25 @@ you open a **new** Git Bash window later, the variable is gone and
 you must do this step again before starting Claude Code — that is
 by design.
 
-### Step 10 — Add the board as a user-scoped server
-
-In the same Git Bash window:
-
-**Command:**
-
-```bash
-claude mcp add-json roundtable --scope user '{"type":"http","url":"https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp","headers":{"Authorization":"Bearer ${ROUNDTABLE_TOKEN}"}}'
-```
-
-**What it does:** registers the board under the name `roundtable`
-in **user scope** — stored in `~/.claude.json`, available in all
-your projects, private to your user account, never in a project
-file. The single quotes matter: they stop the shell expanding
-`${ROUNDTABLE_TOKEN}`, so the config file holds the reference, not
-the token. Claude Code expands it from the environment each time it
-connects. (User scope, not local scope, because the leader session
-runs in the empty folder from Step 7; a local-scoped server would
-only load in that one folder. Project scope is never used here:
-it would write a `.mcp.json` into a project folder.)
-
-**Expected:** a line like
-`Added HTTP MCP server roundtable with URL:
-https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp to user
-config`. If the command complains about its flags, run
-`claude mcp add-json --help` and check the flag order — the command
-and its `--scope` flag are documented at
-<https://code.claude.com/docs/en/mcp>.
-
-**Undo:**
-
-```bash
-claude mcp remove roundtable --scope user
-```
-
 ### Step 11 — Check the connection (and the fallback if it fails)
 
 **Command:**
 
 ```bash
 claude mcp list
+```
+
+and, **only if Step 9 showed the header as
+`${ROUNDTABLE_TOKEN}`** (shown by name, not by value):
+
+```bash
 claude mcp get roundtable
 ```
 
 **What it does:** lists the server's health. A connected server
-shows `✔ Connected`; the detail view shows the
-`${ROUNDTABLE_TOKEN}` reference by name, not the token value.
+shows `✔ Connected`, with 11 tools. Only use `get` with the real
+token if Step 9 proved the header is shown by name — otherwise
+`get` could print the token, and `list` is all you need.
 
 **Expected:** `roundtable` shows `✔ Connected`, with 11 tools.
 If it shows `✘ Failed to connect`, first check the variable is
@@ -388,10 +489,10 @@ echo ${ROUNDTABLE_TOKEN:+set}
 ```
 
 which must print `set` (it prints the word `set`, never the token).
-If it prints nothing, you are in a different shell than Step 9 —
-go back to Step 9 in this window. If the variable is set and the
+If it prints nothing, you are in a different shell than Step 10 —
+go back to Step 10 in this window. If the variable is set and the
 server still fails with a 401, the header is not reaching the board:
-check that the URL in Step 10 has no trailing slash and no typo,
+check that the URL in Step 9 has no trailing slash and no typo,
 then stop and ask the Auditor.
 
 **Fallback (only if the `${VAR}` route does not work):** add the
@@ -399,16 +500,16 @@ server with the header instead, letting the shell expand the
 variable once:
 
 ```bash
-claude mcp add --transport http roundtable --scope user https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp --header "Authorization: Bearer ${ROUNDTABLE_TOKEN}"
+claude mcp add --transport http roundtable --scope local https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp --header "Authorization: Bearer ${ROUNDTABLE_TOKEN}"
 ```
 
 This stores the **literal token** in `~/.claude.json` (the shell
 expands `${ROUNDTABLE_TOKEN}` before Claude Code saves it). It
-works, but the token is then on disk in your user config: remove
-the server with `claude mcp remove roundtable --scope user` when
+works, but the token is then on disk in `~/.claude.json`: remove
+the server with `claude mcp remove roundtable --scope local` when
 you are done, and rotate the token on the VM (Part 5) if the
 computer is ever shared or lost. Do not use this route unless Step
-10's route has actually failed.
+9's route has actually failed.
 
 ### Step 12 — Start the leader session, prompts on
 
@@ -548,10 +649,15 @@ separate actions, and they do different things:
 
 ### Step 16 — Rotate one agent's token (revoke)
 
-Back up first (Step 1), then replace **only that agent's** token.
-For the worker (`muse`):
+Back up first (Step 1). For the worker (`muse`):
 
-**Command:**
+**Command — read the old token into `$TOKEN` first:**
+
+```bash
+TOKEN=$(sudo python3 -c "import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['muse'])")
+```
+
+**Command — then rotate and restart:**
 
 ```bash
 sudo -u roundtable python3 - <<'PYEOF'
@@ -570,16 +676,27 @@ PYEOF
 sudo systemctl restart roundtable
 ```
 
-**What it does:** loads the current file, replaces only `muse`'s
-token with a fresh random one, writes it back mode 600, and
-restarts the service so the new token loads. The leader's token is
-untouched, so Claude Code keeps working.
+**Command — then prove the old token is dead:**
+
+```bash
+printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -s -o /dev/null -w "%{http_code}\n" -X POST http://127.0.0.1:8000/mcp -H @- -H "Content-Type: application/json" -d '{}'
+unset TOKEN
+```
+
+**What it does:** the order matters. The old token is read **before**
+the rotation — after the rotation the file holds the new token, so
+reading it then would test nothing. The rotate step loads the
+current file, replaces only `muse`'s token with a fresh random one,
+writes it back mode 600, and restarts the service so the new token
+loads. The leader's token is untouched, so Claude Code keeps
+working. Tokens are selected by agent name throughout, never by
+their position in the file.
 
 **Expected:** `rotated muse`, then `active` from the restart
-(`sudo systemctl is-active roundtable`). Verify the old worker
-token is dead: repeat Step 5's check with the old worker token
-(read it into `$TOKEN` the Step 2 way, send it, expect `401`,
-`unset TOKEN`). Then take the new token out (Step 6, `[1]`) and
+(`sudo systemctl is-active roundtable`), then `401` for the old
+token. If the old token returns `400`, the rotation did not take
+effect — check the file and restart again, then stop and ask the
+Auditor. Then take the new token out (Step 6, `'muse'`) and
 re-connect Muse (Step 14) — the old connector's stored token no
 longer works.
 
@@ -589,18 +706,20 @@ re-connect the app with the new token.
 
 ### Step 17 — Disconnect Claude Code
 
-In Git Bash:
+In Git Bash, in `~/roundtable-leader`:
 
 **Command:**
 
 ```bash
-claude mcp remove roundtable --scope user
+claude mcp remove roundtable --scope local
 unset ROUNDTABLE_TOKEN
 ```
 
-**What it does:** removes the server from Claude Code's user
-config, so no session will connect to the board again; then clears
-the token from this shell. Close the shell afterwards.
+**What it does:** removes the server from Claude Code's local
+config for this folder, so no session started there will connect to
+the board again; then clears the token from this shell. Close the
+shell afterwards. (Remove it from this folder because that is where
+it was added — local scope lives under the project entry.)
 
 Note: `claude mcp logout roundtable` is for OAuth servers — it
 revokes a stored OAuth token. This board uses a static header, so
