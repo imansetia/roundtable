@@ -232,3 +232,17 @@ def test_guide_step_count_matches():
     assert "## Step 0" in GUIDE
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "48 steps" in changelog
+
+
+def test_m5_updating_section():
+    # M5: the "Updating to M5" section backs up first, updates with
+    # Step 46 to the audited commit, restarts Roundtable only, and
+    # reconnects both apps afterwards.
+    updating = section("Updating to M5")
+    assert "Step 43" in updating  # back up first
+    assert "Step 46" in updating
+    assert "AUDITED_COMMIT" in updating
+    # "restart Roundtable" wraps across two lines in the guide.
+    assert "restart roundtable" in " ".join(updating.split()).lower()
+    assert "Reconnect" in updating
+    assert "scripts/copy-worker-token.sh" in updating

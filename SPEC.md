@@ -37,7 +37,19 @@ Agents never call each other directly. They only read and write the board.
 
 **tasks**: id, title, description, required_skill (optional), status, created_by, assignee, result, review_note, created_at, updated_at.
 
-**messages**: id, task_id, author, kind (`progress` | `help_request` | `reply` | `note`), body, created_at.
+**messages**: id, task_id, author, kind (`progress` | `help_request` | `reply` | `note` | `review`), body, decision (`approved` | `rejected`, only on review messages; null otherwise), created_at.
+
+Review messages are written only by the server, one per successful
+`review_task`: the author is the leader, the body is the review
+note, and `decision` is `approved` or `rejected` — the decision is
+a field, not free text, so a reader cannot confuse it with the
+note. `post_message` with kind `review` is rejected for every
+agent, leader included, so no agent can forge one. A review with
+no note (approve only) stores a review message with an empty body;
+the decision field is the record. `tasks.review_note` keeps its
+current meaning (the latest note). Review messages are untrusted
+content like every other message. Existing tasks get no back-filled
+history.
 
 **audit_log**: append-only; one row per tool call: time, agent, tool, task_id, outcome. Never updated or deleted by any tool.
 
@@ -63,9 +75,9 @@ any non-final state -> cancelled     (leader only)
 | `get_task` | all | One task with its messages. |
 | `claim_task` | worker | `open` -> `claimed`. Must be atomic: if two agents claim at once, exactly one succeeds. |
 | `release_task` | assignee | `claimed` -> `open`. |
-| `post_message` | all | Adds a progress note, help request, or reply to a task. |
+| `post_message` | all | Adds a progress note, help request, or reply to a task. kind `review` is reserved for the server and is rejected. |
 | `submit_result` | assignee | `claimed` -> `submitted`, stores the result. |
-| `review_task` | leader | `submitted` -> `done`, or -> `open` with a review note. |
+| `review_task` | leader | `submitted` -> `done`, or -> `open` with a review note. Also stores a review message (kind `review`) with the decision. |
 | `cancel_task` | leader | Cancels a non-final task. |
 
 Every rule in the "Who" column is enforced on the server. A call that breaks it returns a clear error and changes nothing.
@@ -103,6 +115,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 8. Rate limit triggers after the configured number of calls.
 9. Every tool call above produces an audit_log row.
 10. A tool argument trying to set the caller's identity is ignored or rejected.
+11. (M5) Reject then approve gives two review messages in order, with the right decisions and authors; the audit log has exactly one `review_task` row per call.
 
 ## 10. Milestones
 
@@ -110,6 +123,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M2** — `worker.py` working against one OpenAI-compatible model. -> Auditor review.
 - **M3** — Deployment guide (Ubuntu VM, systemd service, HTTPS reverse proxy, firewall). -> Auditor review **before** anything is exposed to the internet.
 - **M4** — Connect two real agent apps as custom MCP connectors; record one end-to-end demo task.
+- **M5** — Permanent review history: every review stores a review message (Owner decision, 2026-11-11). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.
 

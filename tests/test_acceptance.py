@@ -233,7 +233,15 @@ def test_05_happy_path_create_claim_progress_submit_review_done(server):
     err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
     assert not err
     assert data["task"]["status"] == "done"
-    assert len(data["task"]["messages"]) == 1
+    # M5: the approve stores a review message too, so the task now has
+    # the progress message and the review message, in that order.
+    assert len(data["task"]["messages"]) == 2
+    assert data["task"]["messages"][0]["kind"] == "progress"
+    review = data["task"]["messages"][1]
+    assert review["kind"] == "review"
+    assert review["decision"] == "approved"
+    assert review["author"] == "planner"
+    assert review["body"] == "looks good"
     assert "untrusted_content_warning" in data
 
 
@@ -343,3 +351,34 @@ def test_12_list_filters_and_pagination(server):
     assert len(data["tasks"]) == 2
     assert all(t["status"] == "open" for t in data["tasks"])
     assert data["limit"] == 2 and data["total"] >= 3
+
+
+def test_13_review_history_two_reviews_in_order(server):
+    # SPEC section 9, test 11 (M5): reject then approve gives two
+    # review messages in order, with the right decisions and authors.
+    url = server["url"]
+    task = make_task(url, "Review history task")
+    call(url, CODER, "claim_task", {"task_id": task["id"]})
+    call(url, CODER, "submit_result", {"task_id": task["id"], "result": "first try"})
+    err, _ = call(
+        url, LEADER, "review_task",
+        {"task_id": task["id"], "approve": False, "review_note": "Fix the hyphens"},
+    )
+    assert not err
+    call(url, CODER, "claim_task", {"task_id": task["id"]})
+    call(url, CODER, "submit_result", {"task_id": task["id"], "result": "second try"})
+    err, _ = call(
+        url, LEADER, "review_task",
+        {"task_id": task["id"], "approve": True, "review_note": "Looks good"},
+    )
+    assert not err
+    err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
+    assert not err
+    assert data["task"]["status"] == "done"
+    # tasks.review_note keeps its current meaning: the latest note.
+    assert data["task"]["review_note"] == "Looks good"
+    reviews = [m for m in data["task"]["messages"] if m["kind"] == "review"]
+    assert [(r["decision"], r["author"], r["body"]) for r in reviews] == [
+        ("rejected", "planner", "Fix the hyphens"),
+        ("approved", "planner", "Looks good"),
+    ]

@@ -22,6 +22,13 @@ Interpretations (documented in CHANGELOG.md, not silent scope changes):
 - On reject, the assignee is cleared so the task can be claimed again.
 - ``review_note`` is capped at 4,000 chars like a message (the spec caps
   title/description/message/result but gives no limit for review notes).
+- M5 (Owner decision, 2026-11-11): review history is permanent. Every
+  successful ``review_task`` also stores one message (kind "review",
+  author the leader, body the note, decision a field) in the same
+  transaction as the status change; ``post_message`` with kind
+  "review" is rejected for every agent. ``tasks.review_note`` keeps
+  its current meaning (the latest note). Existing tasks get no
+  back-filled history.
 - The spec diagram mentions "leader reassigns" as a claimed -> open path,
   but section 6 defines no reassign tool, so M1 does not add one; a leader
   can cancel a claimed task and create a replacement instead. Settled by
@@ -49,6 +56,12 @@ LIST_LIMIT_MAX = 100
 
 STATUSES = ("open", "claimed", "submitted", "done", "cancelled")
 MESSAGE_KINDS = ("progress", "help_request", "reply", "note")
+# M5 (Owner decision, 2026-11-11): kind "review" is written only by the
+# server, one message per successful review_task. post_message with
+# kind "review" is rejected for every agent. The decision is a field,
+# not free text, so a reader cannot confuse it with the note.
+REVIEW_KIND = "review"
+REVIEW_DECISIONS = ("approved", "rejected")
 FINAL_STATUSES = ("done", "cancelled")
 
 
@@ -149,6 +162,7 @@ class Board:
                 "author": r["author"],
                 "kind": r["kind"],
                 "body": r["body"],
+                "decision": r["decision"],
                 "created_at": r["created_at"],
             }
             for r in rows
@@ -357,6 +371,14 @@ class Board:
     def post_message(
         self, agent: Agent, task_id: int, body: str, kind: str = "note"
     ) -> dict:
+        if kind == REVIEW_KIND:
+            # M5: only the server writes kind "review" (review_task).
+            # A clear error, for every agent — the leader included —
+            # so nobody can forge a review message.
+            raise RoundtableError(
+                "kind 'review' is reserved for the server: only "
+                "review_task writes review messages"
+            )
         if kind not in MESSAGE_KINDS:
             raise RoundtableError(
                 f"unknown message kind: {kind!r} "
@@ -389,6 +411,7 @@ class Board:
             "author": row["author"],
             "kind": row["kind"],
             "body": row["body"],
+            "decision": row["decision"],
             "created_at": row["created_at"],
         }
 
@@ -430,19 +453,39 @@ class Board:
                 raise RoundtableError(
                     f"task {task_id} is {row['status']!r}, not 'submitted'"
                 )
+            now = _now()
             if approve:
                 self._conn.execute(
                     "UPDATE tasks SET status = 'done', review_note = ?, "
                     "updated_at = ? WHERE id = ?",
-                    (review_note or "", _now(), task_id),
+                    (review_note or "", now, task_id),
                 )
             else:
                 # Rejected -> open again, assignee cleared (see docstring).
                 self._conn.execute(
                     "UPDATE tasks SET status = 'open', assignee = NULL, "
                     "review_note = ?, updated_at = ? WHERE id = ?",
-                    (review_note, _now(), task_id),
+                    (review_note, now, task_id),
                 )
+            # M5: every successful review also stores one review
+            # message, in the same transaction as the status change —
+            # so a review never lands without its history row, and a
+            # failed review (size, state) stores nothing. The note is
+            # the body (empty when an approve has no note; the
+            # decision field is the record then), the decision is a
+            # field, and the author is the leader. tasks.review_note
+            # keeps its current meaning (the latest note).
+            self._conn.execute(
+                "INSERT INTO messages (task_id, author, kind, body, "
+                "decision, created_at) VALUES (?, ?, 'review', ?, ?, ?)",
+                (
+                    task_id,
+                    agent.name,
+                    review_note or "",
+                    "approved" if approve else "rejected",
+                    now,
+                ),
+            )
             self._conn.commit()
             return self._task_dict(self._get_task_row(task_id))
 

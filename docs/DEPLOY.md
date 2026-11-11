@@ -1299,6 +1299,38 @@ service fails to start, read the log (Step 23) — and roll back
 
 **Undo:** Step 47.
 
+### Updating to M5
+
+M5 adds permanent review history: every successful `review_task`
+stores a review message, and the `messages` table is migrated on
+first start (see CHANGELOG.md "M5"). The update itself is the
+normal one — back up first, then Step 46 with the new audited
+commit:
+
+1. **Back up the database first (Step 43).** Do not skip this:
+   the migration rewrites the `messages` table, and the backup is
+   the way back.
+2. **Record the current version (Step 45)**, then set
+   `$AUDITED_COMMIT` to the hash the Auditor gives you for M5 and
+   run **Step 46** (fetch, check out, reinstall, restart
+   Roundtable only). Nothing else is restarted — Hermes, nginx
+   and certbot are untouched.
+3. **Verify:** Step 24 (local 401 check) and Step 41
+   (authenticated check through nginx) must pass, and the service
+   must show `Active: active (running)`. The migration runs on
+   first start; existing tasks keep their messages and get no
+   back-filled review history.
+4. **Reconnect both apps.** The restart drops the leader's MCP
+   connection: in the leader session, open `/mcp` and choose
+   **Reconnect** for `roundtable`. Muse needs the new worker token
+   — the old one was rotated after the M4 demo, so take the
+   current one out with `scripts/copy-worker-token.sh` (see
+   `docs/CONNECT.md` Step 14) and paste it into Muse's secure
+   entry card (field "Kunci API"). If the service fails to start,
+   roll back (Step 47) rather than guessing.
+
+**Undo:** Step 47.
+
 ### Step 47 — Roll back to the previous version
 
 **Command:**

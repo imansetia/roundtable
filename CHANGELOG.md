@@ -2,6 +2,65 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M5 (2026-11-11, in progress — code written, not yet audited)
+
+Permanent review history — the Owner's decision of 2026-11-11
+(correcting the M4 live-run fixes entry, which said the opposite).
+The board kept only the latest `review_note` and result, so a
+reject note was lost once the task was reviewed again.
+
+- **Behaviour.** Every successful `review_task` (approve or
+  reject) also stores one message on the task: kind `review`,
+  author the leader, body the review note, and the decision
+  (`approved` / `rejected`) as a field — not free text, so a reader
+  cannot confuse it with the note. The message is written in the
+  same transaction as the status change, so a review never lands
+  without its history row and a failed review stores nothing.
+  `tasks.review_note` keeps its current meaning (the latest note),
+  so existing clients keep working. An approve with no note still
+  records a review message: empty body, decision only.
+- **Only the server writes kind `review`.** `post_message` with
+  kind `review` is rejected with a clear error ("kind 'review' is
+  reserved for the server") for every agent, leader included.
+  There is no other way to forge one: the only code path that
+  inserts kind `review` is `review_task`.
+- **Size limit.** The same as `review_note` (4,000 chars),
+  rejected not truncated — the message body *is* the note, so the
+  one check covers both.
+- **Untrusted labelling.** Review messages are untrusted content
+  like every other message: `get_task` returns them under the same
+  `untrusted_content_warning`, and the `get_task`, `post_message`
+  and `review_task` tool descriptions say so.
+- **Migration.** The M4 `messages` table limits `kind` with a
+  CHECK constraint, so the migration rebuilds the table (new
+  table, copy, drop, rename — the M1 R3 pattern): the CHECK gains
+  `'review'`, a nullable `decision` column is added, existing
+  messages keep their ids (decision NULL) and the AUTOINCREMENT
+  sequence is pinned to the largest id copied. Existing tasks get
+  no back-filled history. A fresh database uses the new schema
+  directly.
+- **SPEC.md.** Section 5 (message kinds + the review-message
+  rules), section 6 (`review_task` and `post_message` rows),
+  section 9 (one new acceptance test, 11) and section 10 (M5
+  listed), as the Owner's decision.
+- **Deployment.** `docs/DEPLOY.md` gains "Updating to M5": back
+  up first (Step 43), Step 46 with the new audited commit, restart
+  Roundtable only, then reconnect both apps (leader `/mcp` ->
+  Reconnect; Muse with the new worker token via
+  `scripts/copy-worker-token.sh`, since the old one was rotated).
+- **Tests.** `tests/test_m5_review_history.py` (4 tests) and
+  acceptance test 13 in `tests/test_acceptance.py` (SPEC section 9,
+  test 11), plus a guard for the DEPLOY.md section in
+  `tests/test_deploy_config.py`. Test 05 was updated: the happy
+  path now has two messages (progress + review). Each new test
+  failed against the M4 code and passes after.
+
+Deviations from SPEC.md: none — this milestone *is* the spec
+change, made as the Owner's decision and recorded here and in
+SPEC.md.
+Open question for the Owner (not built): should superseded
+results (e.g. a rejected submission) also be kept?
+
 ## M4 live-run fixes (2026-11-11, G1–G9)
 
 M4 is complete. The demo ran end to end on the live board on
