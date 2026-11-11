@@ -9,6 +9,7 @@ next to the code tests. Each test names the audit item it guards.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -40,7 +41,13 @@ def test_d1_renewal_reloads_nginx():
     assert '--deploy-hook "systemctl reload nginx"' in step35
     # After renumbering (D3 inserts a step), the renewal check is step 42.
     step42 = section("Step 42 — Check automatic renewal works")
-    assert "deploy_hook" in step42
+    # certbot stores --deploy-hook as renew_hook in the renewal config
+    # (AUDIT-M3-DEPLOY F5); the grep command must use the stored key.
+    # (The prose may still mention deploy_hook to explain the trap.)
+    assert "renew_hook" in step42
+    command_block = step42.split("```bash")[1].split("```")[0]
+    assert "renew_hook" in command_block
+    assert "deploy_hook" not in command_block
     assert "/etc/letsencrypt/renewal/" in step42
 
 
@@ -59,9 +66,85 @@ def test_d3_authenticated_request_checked_through_nginx():
     step41 = section("Step 41 — Check an authenticated request through nginx")
     assert 'https://"$PUBLIC_NAME"/mcp' in step41
     assert "400, not 421" in step41
-    assert "AUDIT-M3 D3" not in step41  # the step explains itself, no audit ref
-    # And the verification section has the same check.
-    assert GUIDE.count("400, not 421") >= 2
+    # And the verification section points to the same check (F1).
+    assert "Step 41" in part11_outside()
+
+
+def part11_outside() -> str:
+    """The 'From outside the VM' part of Part 11."""
+    start = GUIDE.index("### From outside the VM")
+    end = GUIDE.index("### Rate limiting is unchanged", start)
+    return GUIDE[start:end]
+
+
+def test_f1_outside_check_needs_no_vm_file():
+    outside = part11_outside()
+    # Item 8 used to read /srv/roundtable/agents.json with sudo — a file
+    # that exists only on the VM, and the Owner's computer is Windows.
+    # No outside check may read it; item 8 now points to Step 41.
+    assert "open('/srv/roundtable/agents.json')" not in outside
+    assert "TOKEN=$(sudo python3" not in outside
+    assert "Step 41" in outside
+    # PowerShell 5.1 aliases curl to Invoke-WebRequest, so the flags
+    # in the outside checks fail there.
+    assert "curl.exe" in outside
+    assert "POSIX" in outside
+
+
+def test_f2_restore_loop_exits_zero_without_shm(tmp_path):
+    step44 = section("Step 44 — Restore a backup (only if the database is damaged)")
+    match = re.search(r"bash -c '([^']*)'", step44)
+    assert match, "Step 44 has no move-aside loop"
+    script = match.group(1).replace("/srv/roundtable/data", str(tmp_path))
+    (tmp_path / "roundtable.db").write_text("db")
+    (tmp_path / "roundtable.db-wal").write_text("wal")
+    # No -shm file: the loop must still exit 0 (AUDIT-M3-DEPLOY F2).
+    result = subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "roundtable.db.before-restore").exists()
+    assert (tmp_path / "roundtable.db-wal.before-restore").exists()
+
+
+def test_f3_step31_uses_resolve():
+    step31 = section("Step 31 — Check the redirect works locally")
+    # The R1 catch-all on port 80 returns 444 for the bare IP, so the
+    # check must connect to 127.0.0.1 while sending the public name.
+    # (The prose may still mention the bare-IP curl to explain why.)
+    commands = "".join(
+        block.split("```")[0]
+        for block in step31.split("```bash")[1:]
+    )
+    assert '--resolve "$PUBLIC_NAME:80:127.0.0.1"' in commands
+    assert "http://127.0.0.1/" not in commands
+    assert "301" in step31 and "404" in step31
+
+
+def test_f4_sleep_after_reload():
+    # nginx returns from reload before the new workers serve, so a
+    # check run immediately afterwards can hit the old config.
+    for heading in (
+        "Step 30 — Load the new site (reload, not enable --now)",
+        "Step 39 — Reload nginx (reload, never restart)",
+        "Step 48 — Full uninstall (removes only Roundtable's things)",
+    ):
+        text = section(heading)
+        assert "sleep 2" in text, heading
+        assert text.index("systemctl reload nginx") < text.index("sleep 2")
+
+
+def test_f5_renewal_key_everywhere():
+    part11 = GUIDE[GUIDE.index("## Part 11") :]
+    assert "renew_hook" in part11
+    assert "deploy_hook" not in part11
+    # The CLI flag itself is still --deploy-hook (Step 35).
+    assert '--deploy-hook "systemctl reload nginx"' in GUIDE
+
+
+def test_f6_step23_expects_uvicorn_line():
+    step23 = section("Step 23 — Read the log and confirm the app is listening")
+    # The journal shows Uvicorn's line; the app logs no line of its own.
+    assert "Uvicorn running on http://127.0.0.1:8000" in step23
+    assert "Roundtable M1 listening" not in step23
 
 
 def test_d4_timeouts_below_azures_idle_timeout():

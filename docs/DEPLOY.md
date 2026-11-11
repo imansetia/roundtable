@@ -697,7 +697,9 @@ sudo journalctl -u roundtable -n 20 --no-pager
 **What it does:** shows the service's last 20 log lines.
 
 **Expected:** a line like
-`Roundtable M1 listening on http://127.0.0.1:8000/mcp (db=..., agents=2)`.
+`Uvicorn running on http://127.0.0.1:8000` (and above it `Started
+server process` / `Waiting for application startup`). The app itself
+logs no "listening" line — Uvicorn's line is the confirmation.
 If you see a Python traceback instead, stop and read it — the usual
 causes are a missing `/srv/roundtable/roundtable.env` (Step 20) or a
 bad `agents.json` (Step 15).
@@ -854,6 +856,7 @@ file, and run `nginx -t` again. Never skip this step.
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
+sleep 2
 systemctl is-enabled nginx
 ```
 
@@ -862,9 +865,11 @@ to re-read it. This step is a *reload*, not a start: installing nginx
 in Step 11 already started it — with the default welcome site. `enable
 --now` would do nothing to a running nginx, and the default site would
 stay loaded (Step 31 would then get the welcome page instead of the
-redirect). The reload swaps in the phase-1 site. The second command
-checks nginx is enabled (start on boot), which the package install
-already did.
+redirect). The reload swaps in the phase-1 site. The `sleep 2` matters:
+`reload` returns before the new workers serve, so a check run
+immediately afterwards can still hit the old configuration. The second
+command checks nginx is enabled (start on boot), which the package
+install already did.
 
 **Expected:** the `nginx -t` output (`syntax is ok`, `test is
 successful`), no output from the reload, and `enabled` from
@@ -888,16 +893,21 @@ sudo systemctl disable --now nginx
 **Command:**
 
 ```bash
-curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://127.0.0.1/
+curl --resolve "$PUBLIC_NAME:80:127.0.0.1" -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://"$PUBLIC_NAME"/
 ```
 
-**What it does:** asks nginx for `/` over plain HTTP.
+**What it does:** asks nginx for `/` over plain HTTP. `--resolve`
+makes curl connect to 127.0.0.1 (this VM) while sending
+`Host: $PUBLIC_NAME`, so the request hits the named server block.
+Testing the bare IP directly no longer works: the catch-all server
+added in the M3 audit fixes drops such connections silently (444),
+so a plain `curl http://127.0.0.1/` returns nothing (000).
 
-**Expected:** `301 https://127.0.0.1/` — the redirect to HTTPS. And the
+**Expected:** `301 https://<your name>/` — the redirect to HTTPS. And the
 challenge path is served, not redirected:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1/.well-known/acme-challenge/test
+curl --resolve "$PUBLIC_NAME:80:127.0.0.1" -s -o /dev/null -w "%{http_code}\n" http://"$PUBLIC_NAME"/.well-known/acme-challenge/test
 ```
 
 must print `404` (no challenge file exists yet — the point is that it
@@ -1067,13 +1077,16 @@ fix it and test again. Do not reload a failing config.
 
 ```bash
 sudo systemctl reload nginx
+sleep 2
 ```
 
 **What it does:** tells the running nginx to re-read its configuration
 without dropping connections. **Never use `restart` for nginx here:**
 a restart briefly stops listening, and a restart after a bad config
 can leave nginx down entirely — `reload` after a passing `nginx -t`
-cannot do that.
+cannot do that. The `sleep 2` matters: `reload` returns before the
+new workers serve, so a check run immediately afterwards can still hit
+the old configuration.
 
 **Expected:** no output. Verify with:
 
@@ -1141,7 +1154,7 @@ this step.
 
 ```bash
 systemctl list-timers --all | grep certbot
-sudo grep -r deploy_hook /etc/letsencrypt/renewal/
+sudo grep -r renew_hook /etc/letsencrypt/renewal/
 sudo certbot renew --dry-run
 ```
 
@@ -1150,13 +1163,14 @@ the certbot package; it runs `certbot renew` twice a day and renews
 any certificate due to expire within 30 days, using the webroot method
 saved in step 35 — nginx keeps serving the challenge path, so renewal
 needs no downtime). Then it checks the renewal config actually
-contains the reload hook from Step 35 (`deploy_hook = systemctl reload
-nginx`): without it, a renewal would write new certificate files that
-nginx never loads. Finally it simulates a renewal against Let's
-Encrypt's staging server.
+contains the reload hook from Step 35. Note the key is `renew_hook`,
+not `deploy_hook`: certbot stores the `--deploy-hook` flag under the
+name `renew_hook` in the renewal config, so `grep deploy_hook` finds
+nothing even though the hook is present. Finally it simulates a
+renewal against Let's Encrypt's staging server.
 
 **Expected:** the timer line shows `certbot.timer` with a next-run
-time, the `grep` prints a line with `deploy_hook`, and the dry run ends
+time, the `grep` prints a line with `renew_hook`, and the dry run ends
 with `Congratulations, all simulated renewals succeeded`. The dry run
 takes a minute or so — be patient. If the `grep` prints nothing, the
 hook was not stored: re-run Step 35 with the `--deploy-hook` flag and
@@ -1204,7 +1218,7 @@ sudo rm /srv/roundtable/backups/roundtable-YYYY-MM-DD.db
 
 ```bash
 sudo systemctl stop roundtable
-sudo -u roundtable bash -c 'for suffix in "" "-wal" "-shm"; do f="/srv/roundtable/data/roundtable.db$suffix"; [ -e "$f" ] && mv "$f" "$f.before-restore"; done'
+sudo -u roundtable bash -c 'for suffix in "" "-wal" "-shm"; do f="/srv/roundtable/data/roundtable.db$suffix"; if [ -e "$f" ]; then mv "$f" "$f.before-restore"; fi; done'
 sudo -u roundtable cp /srv/roundtable/backups/roundtable-YYYY-MM-DD.db /srv/roundtable/data/roundtable.db
 sudo systemctl start roundtable
 systemctl status roundtable --no-pager | head -n 5
@@ -1319,6 +1333,7 @@ sudo rm /etc/systemd/system/roundtable.service
 sudo systemctl daemon-reload
 sudo rm /etc/nginx/sites-enabled/roundtable /etc/nginx/sites-available/roundtable
 sudo nginx -t && sudo systemctl reload nginx
+sleep 2
 sudo certbot delete --cert-name "$PUBLIC_NAME"
 sudo ufw delete allow 80/tcp
 sudo ufw delete allow 443/tcp
@@ -1403,26 +1418,28 @@ free -h
 
 # 6. Certificate renews automatically, and the renewal reloads nginx.
 systemctl list-timers --all | grep certbot
-sudo grep -r deploy_hook /etc/letsencrypt/renewal/
+sudo grep -r renew_hook /etc/letsencrypt/renewal/
 sudo certbot renew --dry-run
-#    Expected: certbot.timer listed; the grep prints a deploy_hook line;
+#    Expected: certbot.timer listed; the grep prints a renew_hook line;
 #    dry run succeeds.
 ```
 
 ### From outside the VM (your own computer, not the VM)
+
+Run these in a POSIX shell (Git Bash on Windows) or with `curl.exe`
+on Windows — PowerShell 5.1 treats `curl` as an alias for
+`Invoke-WebRequest`, so the `-s`, `-o` and `-w` flags below fail
+there.
 
 ```bash
 # 7. No token -> 401 (auth still works through the proxy).
 curl -s -o /dev/null -w "%{http_code}\n" -X POST https://$PUBLIC_NAME/mcp -H "Content-Type: application/json" -d '{}'
 #    Expected: 401
 
-# 8. With a token -> 400, not 421 (the Host check passes through nginx).
-#    Same as Step 41, from outside: read the leader token, send it with
-#    the header on stdin (never on the command line).
-TOKEN=$(sudo python3 -c "import json; print(json.load(open('/srv/roundtable/agents.json'))['agents'][0]['token'])")
-printf 'Authorization: Bearer %s\n' "$TOKEN" | curl -s -o /dev/null -w "%{http_code}\n" -X POST https://$PUBLIC_NAME/mcp -H @- -H "Content-Type: application/json" -d '{}'
-unset TOKEN
-#    Expected: 400, not 421.
+# 8. With a token -> 400, not 421: run Step 41 instead. That check
+#    needs the leader token from /srv/roundtable/agents.json, a file
+#    that exists only on the VM, so it cannot run from outside.
+#    Expected: 400, not 421 (see Step 41).
 
 # 9. Any other path -> 404 (only /mcp is exposed).
 curl -s -o /dev/null -w "%{http_code}\n" https://$PUBLIC_NAME/
