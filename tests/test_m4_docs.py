@@ -275,6 +275,45 @@ def test_scripts_parse_as_bash():
         assert proc.returncode == 0, (name, proc.stderr)
 
 
+def test_scripts_are_lf_only():
+    # H2: the Owner's Windows checkout uses core.autocrlf=true, and
+    # the scripts fail in bash with CRLF. .gitattributes forces LF
+    # on checkout; this test guards the committed blobs (read with
+    # `git cat-file`, as the Auditor did) and the working tree.
+    attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "*.sh text eol=lf" in attrs
+    assert "scripts/** text eol=lf" in attrs
+    for path in sorted((ROOT / "scripts").glob("*.sh")):
+        rel = path.relative_to(ROOT).as_posix()
+        # The blob git would store for this file (`hash-object` then
+        # `cat-file`), not just the working tree: that is what a
+        # Windows checkout with core.autocrlf=true receives.
+        hashed = subprocess.run(
+            ["git", "hash-object", str(path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if hashed.returncode == 0:
+            blob = subprocess.run(
+                ["git", "cat-file", "blob", hashed.stdout.strip()],
+                cwd=ROOT,
+                capture_output=True,
+            )
+            data = blob.stdout if blob.returncode == 0 else path.read_bytes()
+        else:
+            data = path.read_bytes()
+        assert b"\r" not in data, rel
+
+
+def test_scripts_use_batch_mode():
+    # The Auditor's note on H2: on a key problem, ssh.exe without
+    # -o BatchMode=yes would ask for a password instead of failing
+    # fast. The scripts must never hang on a prompt.
+    for script in (LEADER_TOKEN_SH, COPY_WORKER_TOKEN_SH):
+        assert "-o BatchMode=yes" in script
+
+
 def test_connect_worker_token_is_token_only():
     # G5: the secure card asks for "Kunci API" = the token only;
     # Muse adds Bearer itself. Copy with no display, then clear

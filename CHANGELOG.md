@@ -81,15 +81,18 @@ The helper scripts carry no token.
   the canary submission were overwritten. DEMO.md now says to
   record the leader's reject reply from its session output (step
   5) and the canary from the worker's report (step 4), when they
-  happen — not at the end. The Owner decided not to change the
-  board for this.
+  happen — not at the end. (Correction, M5 first commit: the Owner
+  decided on 2026-11-11 to keep review notes permanently — that is
+  M5, not "not to change the board". The G9 workaround in DEMO.md
+  stays until M5 is deployed.)
 
 Deviations from SPEC.md: none — docs and helper scripts only.
 Open questions carried over from the demo record
-(`docs/demo/M4-demo.md`): whether review notes and superseded
-results should be kept as messages (a spec question for the
-Owner); the final function accepts leading, trailing or doubled
-hyphens, which is lenient but not wrong against the description.
+(`docs/demo/M4-demo.md`): keeping review notes permanently is M5
+(the Owner's decision, 2026-11-11); keeping superseded results
+is still an open question for the Owner. The final function
+accepts leading, trailing or doubled hyphens, which is lenient
+but not wrong against the description.
 
 ## M4 audit fixes (2026-11-11, AUDIT-M4.md)
 

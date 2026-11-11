@@ -325,7 +325,7 @@ fallback — type it, do not paste it; a long paste breaks, see the
 intro):
 
 ```bash
-read -r ROUNDTABLE_TOKEN < <(/c/Windows/System32/OpenSSH/ssh.exe -i ~/.ssh/azure-hermes azureuser@<vm-host> "sudo python3 -c \"import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['claude'])\"")
+read -r ROUNDTABLE_TOKEN < <(/c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes -i ~/.ssh/azure-hermes azureuser@<vm-host> "sudo python3 -c \"import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['claude'])\"")
 export ROUNDTABLE_TOKEN
 ```
 

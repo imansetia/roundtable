@@ -15,7 +15,7 @@ set -euo pipefail
 
 VM_HOST="${1:-${VM_HOST:-100.75.20.68}}"
 
-/c/Windows/System32/OpenSSH/ssh.exe -i ~/.ssh/azure-hermes \
+/c/Windows/System32/OpenSSH/ssh.exe -o BatchMode=yes -i ~/.ssh/azure-hermes \
     "azureuser@${VM_HOST}" \
     "sudo python3 -c \"import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['muse'], end='')\"" \
     | clip.exe
