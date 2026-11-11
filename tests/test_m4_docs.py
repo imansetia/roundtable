@@ -5,12 +5,19 @@ doc may contain a literal token."""
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CONNECT = (ROOT / "docs" / "CONNECT.md").read_text(encoding="utf-8")
 DEMO = (ROOT / "docs" / "DEMO.md").read_text(encoding="utf-8")
 TEMPLATE = (ROOT / "docs" / "demo" / "M4-demo.md").read_text(encoding="utf-8")
+SCRIPTS = ROOT / "scripts"
+LEADER_TOKEN_SH = (SCRIPTS / "leader-token.sh").read_text(encoding="utf-8")
+START_LEADER_SH = (SCRIPTS / "start-leader.sh").read_text(encoding="utf-8")
+COPY_WORKER_TOKEN_SH = (
+    SCRIPTS / "copy-worker-token.sh"
+).read_text(encoding="utf-8")
 
 
 def flat(text: str) -> str:
@@ -184,3 +191,134 @@ def test_demo_template_covers_the_evidence():
     assert "verbatim" in TEMPLATE_FLAT
     assert "rotated" in TEMPLATE_FLAT
     assert "PASS" in TEMPLATE and "FAIL" in TEMPLATE
+
+
+# --- Live-run fixes (G1-G9, from the 2026-11-11 run) -----------------------
+
+
+def test_connect_leader_starts_in_manual_mode():
+    # G1: Claude Code 2.1.322 starts in auto mode by default, which
+    # approves "lower-risk" tool calls without asking. The leader
+    # must start with --permission-mode default and check the
+    # status line says "manual mode on" (2.1.322 wording).
+    assert "--permission-mode default" in CONNECT
+    assert "manual mode on" in CONNECT_FLAT
+    assert "auto mode" in CONNECT_FLAT
+
+
+def test_connect_leader_loads_only_roundtable():
+    # G2: the leader loaded 33 MCP servers (plugins and account
+    # connectors). The start command loads only roundtable, and /mcp
+    # must show exactly that.
+    assert "ENABLE_CLAUDEAI_MCP_SERVERS=false" in CONNECT
+    assert "--strict-mcp-config" in CONNECT
+    assert "--mcp-config" in CONNECT
+    assert "1 server: roundtable, 11 tools" in CONNECT_FLAT
+    # Decision: the local-scope add-json entry is no longer needed
+    # as the primary route; the dummy check stays in the fallback.
+    assert "is no longer needed" in CONNECT_FLAT
+    assert "dummy-check" in CONNECT
+
+
+def test_connect_install_from_powershell():
+    # G3: the CLI was not installed. Install from the official docs
+    # page, in PowerShell, then verify `claude --version` from bash.
+    assert "https://code.claude.com/docs/en/setup" in CONNECT
+    assert "irm https://claude.ai/install.ps1 | iex" in CONNECT
+    assert "claude --version" in CONNECT
+    assert "~/.claude/downloads" in CONNECT
+    assert "run the installer again" in CONNECT_FLAT
+
+
+def test_connect_bash_entry_and_helper_scripts():
+    # G4: the Owner's terminals are PowerShell. Long pasted commands
+    # got bracketed-paste markers and failed, so the guide ships
+    # small helper scripts run with a short typed command.
+    assert "bash.exe" in CONNECT
+    assert "--login" in CONNECT
+    assert "[200~" in CONNECT
+    assert "scripts/leader-token.sh" in CONNECT
+    assert "scripts/start-leader.sh" in CONNECT
+    assert "scripts/copy-worker-token.sh" in CONNECT
+
+
+def test_scripts_have_no_token():
+    # G4/G5: the helper scripts carry no token, only the variable
+    # name (leader-token.sh sets it, start-leader.sh reads it) and
+    # the agent name (copy-worker-token.sh fetches it).
+    literal = re.compile(r"Bearer\s+(?!\$\{|<)[A-Za-z0-9_\-]{20,}")
+    for script, name in (
+        (LEADER_TOKEN_SH, "leader-token.sh"),
+        (START_LEADER_SH, "start-leader.sh"),
+        (COPY_WORKER_TOKEN_SH, "copy-worker-token.sh"),
+    ):
+        assert not literal.search(script), name
+    assert "ROUNDTABLE_TOKEN" in LEADER_TOKEN_SH
+    assert "${ROUNDTABLE_TOKEN}" in START_LEADER_SH
+    assert "d['muse']" in COPY_WORKER_TOKEN_SH
+    assert "clip.exe" in COPY_WORKER_TOKEN_SH
+
+
+def test_scripts_parse_as_bash():
+    # The scripts run on the Owner's PC in Git Bash; they must at
+    # least parse. (They cannot run here: they call ssh.exe.)
+    for name in (
+        "leader-token.sh",
+        "start-leader.sh",
+        "copy-worker-token.sh",
+    ):
+        proc = subprocess.run(
+            ["bash", "-n", str(SCRIPTS / name)],
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, (name, proc.stderr)
+
+
+def test_connect_worker_token_is_token_only():
+    # G5: the secure card asks for "Kunci API" = the token only;
+    # Muse adds Bearer itself. Copy with no display, then clear
+    # the clipboard history.
+    assert "Kunci API" in CONNECT
+    assert "Muse adds `Bearer` itself" in CONNECT_FLAT
+    assert "clip.exe" in CONNECT
+    assert "Clear all" in CONNECT
+
+
+def test_connect_reconnect_after_restart_and_drop():
+    # G6: on a mobile network an idle keep-alive was dropped
+    # (ECONNRESET, the request never reached nginx), and the leader
+    # needs /mcp -> Reconnect after every roundtable restart.
+    assert "ECONNRESET" in CONNECT
+    assert "ECONNRESET" in DEMO
+    assert "Reconnect" in CONNECT
+    assert "Reconnect" in DEMO
+    assert "never reached nginx" in CONNECT_FLAT
+
+
+def test_connect_region_note():
+    # G7: the login page said "App unavailable in region" while the
+    # browser was on a VPN or Edge Secure Network. Turn those off;
+    # never suggest a VPN to get around a region check.
+    assert "App unavailable in region" in CONNECT
+    assert "Edge Secure Network" in CONNECT
+    assert "Never suggest using a VPN" in CONNECT_FLAT
+
+
+def test_demo_step6_follows_the_review_note():
+    # G8: the scripted version 2 still raised on "²" (isdigit
+    # accepts it, int raises). Step 6 follows the leader's actual
+    # review note and is not a fixed script.
+    assert "s.isascii()" in DEMO
+    assert 'is_valid_isbn13("978316148410²") is False' in DEMO
+    assert "follows the leader's actual review note" in DEMO_FLAT
+    assert "not a fixed script" in DEMO_FLAT
+
+
+def test_demo_evidence_recorded_as_it_happens():
+    # G9: the board keeps only the latest review_note and result, so
+    # the reject note and the canary submission are overwritten.
+    # Record them when they happen, not at the end.
+    assert "only the latest" in DEMO_FLAT
+    assert "record the leader's reject reply" in DEMO_FLAT
+    assert "canary from the worker's report" in DEMO_FLAT

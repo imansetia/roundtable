@@ -2,6 +2,95 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M4 live-run fixes (2026-11-11, G1–G9)
+
+M4 is complete. The demo ran end to end on the live board on
+2026-11-11 (record `docs/demo/M4-demo.md`, commit `a7b5cd4`):
+task 1 `done`, the canary was ignored (0 `cancel_task` rows), and
+the `muse` token was rotated afterwards. Running CONNECT.md and
+DEMO.md for real raised nine findings, fixed here as a
+docs-and-scripts change on top of `a7b5cd4`. No server code
+changes. Each fix that can be guarded by a test has one in
+`tests/test_m4_docs.py` (28 tests total in that file, up from 17).
+The helper scripts carry no token.
+
+- **G1 — the leader must start in manual mode.** Claude Code
+  2.1.322 starts in auto mode by default ("auto mode on"), which
+  approves "lower-risk" tool calls without asking. Step 10 starts
+  the leader with `--permission-mode default` and checks that the
+  status line says "manual mode on" (2.1.322 wording).
+- **G2 — the leader loads only the board.** The session loaded 33
+  MCP servers (installed plugins and the account's claude.ai
+  connectors). The start command is now
+  `ENABLE_CLAUDEAI_MCP_SERVERS=false claude --strict-mcp-config
+  --mcp-config '<roundtable-only JSON>' --permission-mode default`,
+  and `/mcp` must show "1 server: roundtable, 11 tools". Decision:
+  the local-scope add-json entry is no longer needed as the
+  primary route — `--mcp-config` supplies the server for this
+  session only and nothing is written to `~/.claude.json`. The
+  dummy check of `claude mcp get` stays, in the add-json fallback
+  (Step 11), where it is still needed; with 2.1.322 the header was
+  shown by name, `${ROUNDTABLE_TOKEN}`.
+- **G3 — install from the official docs page, in PowerShell.**
+  Step 8 now gives the install command from
+  <https://code.claude.com/docs/en/setup> (`irm
+  https://claude.ai/install.ps1 | iex`), then verifies `claude
+  --version` from bash. The installer can stall on a slow network
+  (a 0-byte download in `~/.claude/downloads`): cancel and run it
+  again.
+- **G4 — shells and helper scripts.** The Owner's terminals are
+  PowerShell: the guide says how to enter bash (`&
+  "C:\Program Files\Git\bin\bash.exe" --login`) and to use a
+  separate window, not the Claude app's own terminal panel. Long
+  pasted commands got bracketed-paste markers (`[200~` … `~`) and
+  failed, so the long commands are now small helper scripts with
+  no token in them (`scripts/leader-token.sh`,
+  `scripts/start-leader.sh`, `scripts/copy-worker-token.sh`), run
+  with a short typed command. They use Windows OpenSSH with
+  `-i ~/.ssh/azure-hermes`, because Git's ssh is refused by this
+  VM. `leader-token.sh` must be sourced, not run.
+- **G5 — the worker token, copied with no display.** Step 6/14 now
+  use `scripts/copy-worker-token.sh` (SSH piped into `clip.exe`,
+  no trailing newline), then Win+V "Clear all". Muse's secure card
+  asks for "Kunci API" — the token only; Muse adds `Bearer`
+  itself. The old "paste `Bearer <token>` if the card asks for
+  the header value" branch is gone: the card's wording is now
+  known from the run.
+- **G6 — connection drops and reconnects.** On a mobile network an
+  idle keep-alive was dropped (`ECONNRESET`, and the request never
+  reached nginx). DEMO.md's "If something goes wrong" and
+  CONNECT.md Step 13 now say to retry once — a call that never
+  reached the board changed nothing. The leader also needs `/mcp`
+  → Reconnect after a roundtable restart while it is connected
+  (the restart steps are 4 and 16; Step 16 is the one that happens
+  while the leader is connected, and it says so).
+- **G7 — the login page and region.** The leader's login page
+  showed "App unavailable in region" while the browser was on a
+  VPN or Edge Secure Network. Step 8 says to turn those off and
+  log in with the browser normally used for claude.ai. It never
+  suggests using a VPN to get around a region check.
+- **G8 — DEMO.md step 6 is not a fixed script.** The scripted
+  version 2 still raised on "²" (`str.isdigit()` accepts it,
+  `int()` raises), which the description forbids; the leader
+  caught it in the run. Version 2 now uses `s.isascii()`, adds
+  the "²" test (7 tests), and the step says it follows the
+  leader's actual review note. The function and its 7 asserts
+  were verified by running them in the sandbox (not on the VM).
+- **G9 — evidence is recorded as it happens.** The board keeps
+  only the latest `review_note` and result, so the reject note and
+  the canary submission were overwritten. DEMO.md now says to
+  record the leader's reject reply from its session output (step
+  5) and the canary from the worker's report (step 4), when they
+  happen — not at the end. The Owner decided not to change the
+  board for this.
+
+Deviations from SPEC.md: none — docs and helper scripts only.
+Open questions carried over from the demo record
+(`docs/demo/M4-demo.md`): whether review notes and superseded
+results should be kept as messages (a spec question for the
+Owner); the final function accepts leading, trailing or doubled
+hyphens, which is lenient but not wrong against the description.
+
 ## M4 audit fixes (2026-11-11, AUDIT-M4.md)
 
 Auditor verdict was PASS WITH REQUIRED FIXES — do not run
@@ -96,7 +185,7 @@ the demo", Step 16) because it passed through a copy-paste.
 Nothing on the VM changes and no app is connected until the
 re-audit passes.
 
-## M4 (2026-11-11, in progress — docs written, demo not yet run)
+## M4 (2026-11-11, complete — demo ran, see docs/demo/M4-demo.md)
 
 M3 is complete and deployed on HermesVM (see
 `docs/audits/AUDIT-M3-FIXES.md` and `docs/audits/AUDIT-M3-DEPLOY.md`):

@@ -22,18 +22,38 @@ Tailscale (as in DEPLOY.md), the Auditor present, and the two new
 agent names decided (Step 1 uses them). The Owner's computer is
 Windows; run the PC-side commands in **Git Bash** (a POSIX shell),
 not PowerShell 5.1, which aliases `curl` to `Invoke-WebRequest`
-(see DEPLOY.md Part 11).
+(see DEPLOY.md Part 11). To get into Git Bash from PowerShell, in
+a **separate window** (not the Claude app's own terminal panel):
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" --login
+```
+
+Long pasted commands fail in that window: the terminal inserts
+bracketed-paste markers (`[200~` … `~`) around a long paste and
+the command breaks. So this guide ships small helper scripts with
+**no token in them** — `scripts/leader-token.sh`,
+`scripts/start-leader.sh`, `scripts/copy-worker-token.sh` — and
+each step tells you the short command to **type** (not paste) to
+run one. If a paste ever shows `[200~` markers, press `Ctrl+C`
+and type the short command instead.
 
 ## Sources
 
 Every claim about the two apps comes from their current official
 docs, read on 2026-11-11:
 
-- Claude Code, remote HTTP MCP servers, custom headers, scopes and
-  environment-variable expansion:
+- Claude Code, remote HTTP MCP servers, custom headers, scopes,
+  environment-variable expansion, and claude.ai connectors
+  (`ENABLE_CLAUDEAI_MCP_SERVERS`):
   <https://code.claude.com/docs/en/mcp>
+- Claude Code, CLI flags (`--mcp-config`, `--strict-mcp-config`,
+  `--permission-mode`):
+  <https://code.claude.com/docs/en/cli-reference>
 - Claude Code, permission modes and the permission table:
   <https://code.claude.com/docs/en/permissions>
+- Claude Code, installation (Windows PowerShell, `claude
+  --version`): <https://code.claude.com/docs/en/setup>
 - Claude Code, first-server walkthrough:
   <https://code.claude.com/docs/en/mcp-quickstart>
 - Muse: the app's own custom-connector documentation (the
@@ -259,7 +279,7 @@ and nothing is written to disk.
 **How to copy it:** select the printed token with the mouse in your
 terminal (Windows Terminal: drag to select, right-click to copy)
 and paste it **directly** into the app's prompt — the `read -s`
-prompt for Claude Code (Step 10), or Muse's secure entry card
+prompt for Claude Code (Step 9), or Muse's secure entry card
 (Step 14). Paste it nowhere else, not even into a text editor "for
 a moment".
 
@@ -281,34 +301,65 @@ copy. After pasting the token into the app, open Win+V, choose
 guide) so the token is not the most recent item either.
 
 **Prefer no display at all for Claude Code.** The leader token
-never needs to appear on screen: in Git Bash on the Owner's
-computer, run the token straight from the VM into the shell
-variable, using Windows OpenSSH (Git Bash's own `ssh` is refused
-by this VM — use `ssh.exe`):
+never needs to appear on screen. From the repo folder in Git Bash,
+**type** (do not paste) this short command — it sources a helper
+script that fetches the token straight from the VM into the shell
+variable:
 
 ```bash
-read -r ROUNDTABLE_TOKEN < <(/c/Windows/System32/OpenSSH/ssh.exe azureuser@<vm-host> "sudo python3 -c \"import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['claude'])\"")
+source scripts/leader-token.sh
+```
+
+The script uses Windows OpenSSH (Git Bash's own `ssh` is refused
+by this VM — use `ssh.exe`) with the key `~/.ssh/azure-hermes`,
+and reads the token with `read -r`, so it is never displayed,
+never typed, and never written to a file. It must be **sourced**,
+not run as `bash scripts/leader-token.sh`: a sourced script sets
+the variable in your shell, while a run script sets it in a child
+shell that exits at once. If the script is not in the repo folder
+you are in, `cd` to the repo first; pass another VM host as the
+first argument (or set `$VM_HOST`) if the default does not fit.
+
+If the script fails, the same route as one inline command (the
+fallback — type it, do not paste it; a long paste breaks, see the
+intro):
+
+```bash
+read -r ROUNDTABLE_TOKEN < <(/c/Windows/System32/OpenSSH/ssh.exe -i ~/.ssh/azure-hermes azureuser@<vm-host> "sudo python3 -c \"import json; d={a['name']: a['token'] for a in json.load(open('/srv/roundtable/agents.json'))['agents']}; print(d['claude'])\"")
 export ROUNDTABLE_TOKEN
 ```
 
-`<vm-host>` is the same host you SSH to for the VM steps. `read -r`
-reads the token from the SSH output without echoing it, so it is
-never displayed, never typed, and never written to a file. Use
-this route for the leader, and keep the display-and-copy route
-above for Muse (its secure entry card needs a paste) and as the
-fallback if this one fails.
+`<vm-host>` is the same host you SSH to for the VM steps (the
+script's default is the VM's Tailscale address). Use the no-display
+route for the leader, and keep the display-and-copy route above
+for Muse (its secure entry card needs a paste) and as the fallback
+if this one fails.
+
+**For Muse, copy with no display too.** The worker token also
+never needs to appear on screen: from the repo folder in Git Bash,
+type:
+
+```bash
+bash scripts/copy-worker-token.sh
+```
+
+It pipes the token straight into the Windows clipboard
+(`clip.exe`, no trailing newline), so nothing is displayed. Then
+paste it into Muse's secure entry card (Step 14) and clear the
+clipboard history as below.
 
 **Where each app stores it afterwards:**
 
 - **Claude Code:** with the route in Part 3, the token is stored
-  **nowhere on disk**. Only the text `${ROUNDTABLE_TOKEN}` is
-  written into `~/.claude.json`, under the `~/roundtable-leader`
-  project entry (local scope — see Step 9); the value itself lives
-  only in the shell session that starts Claude Code, set with
-  `read -s` in Step 10 or with the no-display route above. Close
-  that shell and the value is gone. (If you ever use the fallback
-  in Step 11 instead, the literal token is stored in
-  `~/.claude.json` — see that step.)
+  **nowhere on disk**. Only the text `${ROUNDTABLE_TOKEN}` is in
+  the start command (`scripts/start-leader.sh`); the value itself
+  lives only in the shell session that starts Claude Code, set in
+  Step 9. Close that shell and the value is gone. (If you ever use
+  the add-json fallback in Step 11 instead, the *reference*
+  `${ROUNDTABLE_TOKEN}` is stored in `~/.claude.json` under the
+  `~/roundtable-leader` project entry — local scope — and the literal
+  token is stored there only if you use that step's `--header`
+  fallback. See Step 11.)
 - **Muse:** the token is stored in Muse's Secure Credentials Store,
   under the registered Roundtable connection. It is never written to
   a file — not in the connector doc, not in a skill, not on the
@@ -322,30 +373,54 @@ Claude Code's own docs
 recommended option for remote MCP servers, and that a token header
 is passed with `--header`. They also say Claude Code expands
 environment variables in a server's `headers` value
-(`"Authorization": "Bearer ${ROUNDTABLE_TOKEN}"`). What the docs
-do **not** say is whether a header value is shown by name (as
-`${ROUNDTABLE_TOKEN}`) or by its expanded value in `claude mcp
-get` output — they say that only for the URL and command line.
-Step 9 checks that with a dummy value first, before any real token
-is set. A variable name of your own (here `ROUNDTABLE_TOKEN`)
-expands as written; do not use one of Claude Code's own credential
-names (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, …), which it
-reads as empty in a remote server's `headers`.
+(`"Authorization": "Bearer ${ROUNDTABLE_TOKEN}"`), and that a
+`${VAR}` reference is shown by name, not by its resolved value, in
+`/mcp` and in `claude mcp list` and `claude mcp get` output. A
+variable name of your own (here `ROUNDTABLE_TOKEN`) expands as
+written; do not use one of Claude Code's own credential names
+(`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, …), which it reads
+as empty in a remote server's `headers`.
 
-**Scope is local, not user.** A local-scoped server loads only in
-the project where you added it — here, only in
-`~/roundtable-leader`. A user-scoped server would load in *every*
-Claude Code session on the PC, including the Auditor's own session
-and any unrelated project, which would give every one of those
-sessions leader access to the board. That is exactly what the
-separation of leader and Auditor is meant to prevent. **The
-Auditor's own Claude Code session must not have the `roundtable`
-server** — if it ever does, remove it with `claude mcp remove
-roundtable --scope local` from that session's folder.
+Two things the plain `claude` start gets wrong in this demo, both
+found in the live run (Claude Code 2.1.322):
+
+- **It starts in auto mode**, which approves "lower-risk" tool
+  calls without asking. The leader must start with
+  `--permission-mode default` (the CLI reference,
+  <https://code.claude.com/docs/en/cli-reference>), which is the
+  mode the permission table
+  (<https://code.claude.com/docs/en/permissions>) calls Manual:
+  prompts on first use of each tool.
+- **It loads every MCP server it can find** — in the run, 33 of
+  them (installed plugins and the account's claude.ai
+  connectors), not only the board. So the leader starts with
+  `--strict-mcp-config --mcp-config '<roundtable-only JSON>'` (same
+  CLI reference): `--mcp-config` loads MCP servers from a JSON
+  string, and `--strict-mcp-config` uses only those servers,
+  ignoring all other MCP configurations. The environment variable
+  `ENABLE_CLAUDEAI_MCP_SERVERS=false` turns off the claude.ai
+  connectors for the session (MCP docs, "Disable claude.ai
+  connectors"); servers passed via `--mcp-config` are unaffected
+  by it.
+
+**The local-scope add-json entry (Step 9 in the earlier version
+of this guide) is no longer needed:** `--mcp-config` supplies the
+server for this session only, and nothing is written to
+`~/.claude.json`. The dummy check of `claude mcp get` stays, but
+only in the add-json fallback (Step 11) — with nothing registered,
+there is no stored header for `get` to print.
+
+**The Auditor's own Claude Code session must not have the
+`roundtable` server** — if it ever does, remove it with `claude
+mcp remove roundtable --scope local` from that session's folder.
+Project scope is never used here: it would write a `.mcp.json`
+into a project folder.
 
 ### Step 7 — Make an empty folder for the leader session
 
-On the Owner's computer, in Git Bash:
+On the Owner's computer, in a **separate Git Bash window** (not
+the Claude app's own terminal panel — see the intro), in the
+folder where you keep the repo:
 
 **Command:**
 
@@ -372,132 +447,224 @@ session is closed).
 
 ### Step 8 — Install Claude Code, if it is not installed yet
 
-Follow the official install instructions on the Claude Code docs
-site (the MCP quickstart,
-<https://code.claude.com/docs/en/mcp-quickstart>, is the
-first-server walkthrough). Do not install it from anywhere else.
-Then come back here.
+Install it from the official docs page,
+<https://code.claude.com/docs/en/setup>, in **PowerShell**
+(the prompt shows `PS C:\`). The command there is:
 
-### Step 9 — Add the board, and check what `claude mcp get` prints (dummy value first)
-
-In the same Git Bash window, in `~/roundtable-leader`:
-
-**Command:**
-
-```bash
-ROUNDTABLE_TOKEN=dummy-check claude mcp add-json roundtable --scope local '{"type":"http","url":"https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp","headers":{"Authorization":"Bearer ${ROUNDTABLE_TOKEN}"}}'
-ROUNDTABLE_TOKEN=dummy-check claude mcp get roundtable
+```powershell
+irm https://claude.ai/install.ps1 | iex
 ```
 
-**What it does:** registers the board under the name `roundtable`
-in **local scope** — stored in `~/.claude.json` under this
-project's entry, loading only in `~/roundtable-leader`, private to
-you, never in a project file. (Local scope is the default; the
-flag is written out so the scope is a deliberate choice, not an
-accident. Project scope is never used here: it would write a
-`.mcp.json` into a project folder.) The single quotes matter: they
-stop the shell expanding `${ROUNDTABLE_TOKEN}`, so the config file
-holds the reference, not the token. Claude Code expands it from
-the environment each time it connects.
+You do not need to run PowerShell as Administrator. The install
+command shows no progress while it downloads Claude Code — that is
+normal. If it seems to stall on a slow network (in the run, a
+0-byte download sat in `~/.claude/downloads` and nothing moved),
+cancel it with `Ctrl+C` and run the installer again.
 
-The `ROUNDTABLE_TOKEN=dummy-check` prefix sets the variable to a
-dummy value for those two commands only. That is the point of this
-step: the docs say Claude Code shows `${VAR}` references by name
-for a server's URL and command line, but they do **not** say that
-for header values. With a dummy value you can see what `get`
-actually prints, before any real token is involved. Look at the
-`get` output now:
-
-- If the Authorization header shows as
-  `${ROUNDTABLE_TOKEN}`, the header is shown by name — `get` is
-  safe to use with the real token (Step 11).
-- If it shows `dummy-check`, the header is shown by its expanded
-  value — **do not run `get` with the real token**. Use
-  `claude mcp list` only (Step 11).
-
-**Expected:** a line like
-`Added HTTP MCP server roundtable with URL:
-https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp to local
-config`, then the `get` output. The server will show as failed to
-connect — expected, the dummy value is not a real token. If the
-command complains about its flags, run
-`claude mcp add-json --help` and check the flag order — the command
-and its `--scope` flag are documented at
-<https://code.claude.com/docs/en/mcp>.
-
-**Undo:**
+Then verify the install from **bash** (open Git Bash, or the
+window from the intro): type
 
 ```bash
-claude mcp remove roundtable --scope local
+claude --version
 ```
 
-### Step 10 — Give this shell the leader token (never typed, never stored)
+**Expected:** a version number, such as `2.1.322 (Claude Code)`.
+If the shell says `claude` is not found, the install directory is
+not on your `PATH` yet — see "Fix your PATH" on the same docs
+page, then run the command again from a new terminal window.
 
-In the same Git Bash window, in `~/roundtable-leader`:
+**Signing in.** After installing, starting `claude` opens the
+browser to sign in with your Claude account. If the login page
+says **"App unavailable in region"**, the browser is probably on
+a VPN or on Edge Secure Network: turn those off and sign in with
+the browser you normally use for claude.ai. **Never suggest using
+a VPN to get around a region check** — the fix is to turn the
+tunnel off, not on.
 
-**Command:**
+### Step 9 — Give this shell the leader token (never typed, never stored)
+
+In the same Git Bash window, in the repo folder (the helper script
+lives in `scripts/` there):
+
+**Command — type it, do not paste it:**
+
+```bash
+source scripts/leader-token.sh
+```
+
+**What it does:** the script fetches the leader token from the VM
+(Step 6's no-display route) and stores it in the shell variable
+`ROUNDTABLE_TOKEN`, without showing it. `export` inside the script
+makes it visible to programs this shell starts — including Claude
+Code. The value is never written to a file and never enters shell
+history; it lives only in this shell session. The script must be
+**sourced**: `source scripts/leader-token.sh` sets the variable
+in your shell, while `bash scripts/leader-token.sh` would set it
+in a child shell that exits at once.
+
+**Fallback (only if the script fails):** `read -s` waits for you
+to paste the leader token (from Step 6) without echoing it to the
+screen:
 
 ```bash
 read -s ROUNDTABLE_TOKEN
 export ROUNDTABLE_TOKEN
 ```
 
-**What it does:** `read -s` waits for you to paste the leader
-token (from Step 6) without echoing it to the screen, and stores it
-in the shell variable `ROUNDTABLE_TOKEN`. `export` makes it visible
-to programs this shell starts — including Claude Code. The value is
-never written to a file and never enters shell history; it lives
-only in this shell session. (If you used Step 6's no-display route
-instead, the variable is already set — skip the `read -s` line and
-just run `export ROUNDTABLE_TOKEN`.)
-
-**Expected:** no output. The cursor sits still while you paste —
-that is `read -s` hiding the input, not a frozen terminal. Press
-Enter after pasting.
+**Expected:** the script prints `Leader token loaded into
+$ROUNDTABLE_TOKEN (not shown).` (The `read -s` fallback prints
+nothing — the cursor sits still while you paste, that is `read
+-s` hiding the input, not a frozen terminal. Press Enter after
+pasting.)
 
 **Undo:** `unset ROUNDTABLE_TOKEN` (and close the shell). Note: if
 you open a **new** Git Bash window later, the variable is gone and
 you must do this step again before starting Claude Code — that is
 by design.
 
+### Step 10 — Start the leader with only the roundtable server, prompts on
+
+In the same Git Bash window, in the repo folder:
+
+**Command — type it, do not paste it:**
+
+```bash
+bash scripts/start-leader.sh
+```
+
+**What it does:** the script checks that `ROUNDTABLE_TOKEN` is
+set, moves into `~/roundtable-leader`, and starts Claude Code
+with the board as its only MCP server, in manual permission mode.
+The full command it runs is:
+
+```bash
+ENABLE_CLAUDEAI_MCP_SERVERS=false claude --strict-mcp-config \
+    --mcp-config '{"mcpServers":{"roundtable":{"type":"http","url":"https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp","headers":{"Authorization":"Bearer ${ROUNDTABLE_TOKEN}"}}}}' \
+    --permission-mode default
+```
+
+- `ENABLE_CLAUDEAI_MCP_SERVERS=false` keeps the account's
+  claude.ai connectors out of the session.
+- `--strict-mcp-config` ignores every other MCP configuration
+  (plugins, `~/.claude.json`, `.mcp.json`), so only the servers in
+  `--mcp-config` load.
+- `--mcp-config` carries the roundtable-only JSON. The single
+  quotes stop the shell expanding `${ROUNDTABLE_TOKEN}`, so the
+  config holds the reference, not the token; Claude Code expands
+  it from the environment each time it connects.
+- `--permission-mode default` is the mode the permission table
+  calls Manual: Claude Code prompts for permission on first use of
+  each tool — shell commands, file edits, web fetches, and MCP tool
+  calls all ask first (see the permission table at
+  <https://code.claude.com/docs/en/permissions>). That is what you
+  want: the board's content is untrusted — task text, results and
+  messages are data written by other agents, and must never be able
+  to make the leader run something you did not approve.
+
+Type the short script command instead of pasting the long command:
+a long paste inserts bracketed-paste markers (`[200~` … `~`) and
+breaks (see the intro).
+
+**Never** start the leader with `--dangerously-skip-permissions`
+(or `bypassPermissions` mode): it skips every permission prompt,
+which is the opposite of what this demo needs. Also do not answer
+"Yes, and don't ask again" for a board tool call — approve each one
+as it comes, so you see what the leader is about to do.
+
+**Expected:** the Claude Code welcome screen, in
+`~/roundtable-leader`. Check the status line says **"manual mode
+on"** (the wording in 2.1.322) — if it says "auto mode on", the
+session started in the wrong mode: exit and start it again with
+`--permission-mode default`.
+
+**Undo:** `Ctrl+C` twice, or type `/exit`, to end the session.
+
 ### Step 11 — Check the connection (and the fallback if it fails)
 
-**Command:**
+In the leader session, type `/mcp`.
 
-```bash
-claude mcp list
-```
+**Expected:** the panel shows **"1 server: roundtable, 11
+tools"** — exactly one server, the board, with its 11 tools. If
+it shows more servers (plugins, claude.ai connectors) or none,
+stop: the start command in Step 10 did not take effect. Exit the
+session and run it again from the same shell (check the variable
+is still set first — see below).
 
-and, **only if Step 9 showed the header as
-`${ROUNDTABLE_TOKEN}`** (shown by name, not by value):
-
-```bash
-claude mcp get roundtable
-```
-
-**What it does:** lists the server's health. A connected server
-shows `✔ Connected`, with 11 tools. Only use `get` with the real
-token if Step 9 proved the header is shown by name — otherwise
-`get` could print the token, and `list` is all you need.
-
-**Expected:** `roundtable` shows `✔ Connected`, with 11 tools.
-If it shows `✘ Failed to connect`, first check the variable is
-actually set in **this** shell:
+If the server shows `✘ Failed to connect`, first check the
+variable is actually set in **this** shell. Open a new Git Bash
+window is not enough — the variable lives only in the shell that
+ran Step 9 — so in that shell run:
 
 ```bash
 echo ${ROUNDTABLE_TOKEN:+set}
 ```
 
 which must print `set` (it prints the word `set`, never the token).
-If it prints nothing, you are in a different shell than Step 10 —
-go back to Step 10 in this window. If the variable is set and the
-server still fails with a 401, the header is not reaching the board:
-check that the URL in Step 9 has no trailing slash and no typo,
-then stop and ask the Auditor.
+If it prints nothing, you are in a different shell than Step 9 —
+go back to Step 9 in this window. If the variable is set and the
+server still fails with a 401, the header is not reaching the
+board: check that the URL in Step 10 has no trailing slash and no
+typo, then stop and ask the Auditor.
 
-**Fallback (only if the `${VAR}` route does not work):** add the
-server with the header instead, letting the shell expand the
-variable once:
+**Fallback (only if the `--mcp-config` route does not work on
+the installed version):** register the board with `add-json`
+in **local scope** — stored in `~/.claude.json` under this
+project's entry, loading only in `~/roundtable-leader`, private to
+you, never in a project file. (Local scope is the default; the
+flag is written out so the scope is a deliberate choice, not an
+accident. Project scope is never used here: it would write a
+`.mcp.json` into a project folder.) Check what `get` prints with
+a dummy value first, before any real token is involved:
+
+```bash
+ROUNDTABLE_TOKEN=dummy-check claude mcp add-json roundtable --scope local '{"type":"http","url":"https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp","headers":{"Authorization":"Bearer ${ROUNDTABLE_TOKEN}"}}'
+ROUNDTABLE_TOKEN=dummy-check claude mcp get roundtable
+```
+
+The `ROUNDTABLE_TOKEN=dummy-check` prefix sets the variable to a
+dummy value for those two commands only. The docs say Claude Code
+shows `${VAR}` references by name for a server's URL and command
+line, but they do **not** say that for header values — with a
+dummy value you can see what `get` actually prints. (In the run,
+with 2.1.322, the header was shown by name,
+`${ROUNDTABLE_TOKEN}`.) Look at the `get` output now:
+
+- If the Authorization header shows as
+  `${ROUNDTABLE_TOKEN}`, the header is shown by name — `get` is
+  safe to use with the real token.
+- If it shows `dummy-check`, the header is shown by its expanded
+  value — **do not run `get` with the real token**. Use
+  `claude mcp list` only.
+
+Only use `get` with the real token if this check proved the header
+is shown by name. Then start the session with the connectors off
+and prompts on:
+
+```bash
+ENABLE_CLAUDEAI_MCP_SERVERS=false claude --permission-mode default
+```
+
+**Expected (fallback):** a line like `Added HTTP MCP server
+roundtable with URL:
+https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp to local
+config`, then the `get` output. The server will show as failed to
+connect with the dummy value — expected, the dummy value is not a
+real token. If the command complains about its flags, run
+`claude mcp add-json --help` and check the flag order — the command
+and its `--scope` flag are documented at
+<https://code.claude.com/docs/en/mcp>. Note the fallback does
+**not** isolate plugins: `/mcp` may show other servers besides
+roundtable. Treat any extra server as a finding, not as normal.
+
+**Undo (fallback):**
+
+```bash
+claude mcp remove roundtable --scope local
+```
+
+**Second fallback (only if the `${VAR}` route does not work):**
+add the server with the header instead, letting the shell expand
+the variable once:
 
 ```bash
 claude mcp add --transport http roundtable --scope local https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp --header "Authorization: Bearer ${ROUNDTABLE_TOKEN}"
@@ -508,39 +675,17 @@ expands `${ROUNDTABLE_TOKEN}` before Claude Code saves it). It
 works, but the token is then on disk in `~/.claude.json`: remove
 the server with `claude mcp remove roundtable --scope local` when
 you are done, and rotate the token on the VM (Part 5) if the
-computer is ever shared or lost. Do not use this route unless Step
-9's route has actually failed.
+computer is ever shared or lost. Do not use this route unless the
+`${VAR}` route has actually failed.
 
-### Step 12 — Start the leader session, prompts on
+### Step 12 — Check the permission rules (`/permissions`)
 
-In the same Git Bash window, in `~/roundtable-leader`:
-
-**Command:**
-
-```bash
-claude
-```
-
-**What it does:** starts Claude Code in the empty folder, in its
-default permission mode. In that mode Claude Code prompts for
-permission on first use of each tool — shell commands, file edits,
-web fetches, and MCP tool calls all ask first (see the permission
-table at <https://code.claude.com/docs/en/permissions>). That is
-what you want: the board's content is untrusted — task text,
-results and messages are data written by other agents, and must
-never be able to make the leader run something you did not approve.
-
-**Never** start the leader with `--dangerously-skip-permissions`
-(or `bypassPermissions` mode): it skips every permission prompt,
-which is the opposite of what this demo needs. Also do not answer
-"Yes, and don't ask again" for a board tool call — approve each one
-as it comes, so you see what the leader is about to do.
-
-**Expected:** the Claude Code welcome screen, in
-`~/roundtable-leader`. Check the mode: press `/permissions` (or
-type it) and confirm there is no allow rule for `Bash`, `Edit`,
-`Write` or `mcp__roundtable__*`. If there is one from an earlier
-session, remove it before continuing.
+In the leader session, type `/permissions` and confirm there is
+no allow rule for `Bash`, `Edit`, `Write` or
+`mcp__roundtable__*`. If there is one from an earlier session,
+remove it before continuing — an allow rule from before would let
+the leader run a board tool call without asking, which is exactly
+what manual mode is meant to prevent.
 
 **Undo:** `Ctrl+C` twice, or type `/exit`, to end the session.
 
@@ -554,6 +699,12 @@ In the leader session, ask:
 **Expected:** name `claude`, role `leader`, skills `planning`,
 `review`. If it returns anything else, stop — the wrong token is
 connected.
+
+If the `whoami` call fails with `ECONNRESET` (connection reset),
+the request never reached nginx: on a mobile network an idle
+keep-alive can be dropped before the call goes out. Retry the call
+once — a call that never reached the board changed nothing. If it
+still fails, re-check the connection in Step 11.
 
 Then, in Git Bash (outside the session), the two negative checks.
 They need no real token — the second uses a deliberately wrong one:
@@ -598,13 +749,24 @@ In the main chat with Muse (this app), send exactly:
 > the chat. Save the connector so it is available in future chats.
 
 **What happens next:** Muse sets up the connection and shows a
-secure entry card for the credential. Paste the **worker** token
-(from Step 6, `[1]`) into that card — and only there. If the card
-asks for the Authorization header value, paste
-`Bearer <the token>`; if it asks for the token, paste just the
-token. Muse never asks for the token in the chat itself; if any
-message asks you to type it in the chat, stop — that is not how
-this works.
+secure entry card for the credential. Copy the **worker** token
+(the `muse` token) with no display first — from the repo folder
+in Git Bash, type:
+
+```bash
+bash scripts/copy-worker-token.sh
+```
+
+It pipes the token straight into the Windows clipboard, so
+nothing is displayed. Then paste it into that card — and only
+there. The card asks for the token: the field is labelled
+**"Kunci API"**. Paste **just the token** — **Muse adds `Bearer`
+itself**. Do not paste `Bearer <the token>`. After pasting, clear
+the clipboard history: open Win+V, choose "Clear all", and then
+copy something harmless (a word from this guide) so the token is
+not the most recent item either. Muse never asks for the token in
+the chat itself; if any message asks you to type it in the chat,
+stop — that is not how this works.
 
 **Expected:** Muse confirms the connector, lists the board's tools
 (11 of them, including `whoami`, `list_tasks`, `claim_task`,
@@ -692,6 +854,12 @@ loads. The leader's token is untouched, so Claude Code keeps
 working. Tokens are selected by agent name throughout, never by
 their position in the file.
 
+**After the restart, the leader must reconnect.** The restart drops
+the leader session's MCP connection: in the leader session, open
+`/mcp` and choose **Reconnect** for `roundtable` before the next
+board call. Until then its calls fail — the connection is stale,
+not the token.
+
 **Expected:** `rotated muse`, then `active` from the restart
 (`sudo systemctl is-active roundtable`), then `401` for the old
 token. If the old token returns `400`, the rotation did not take
@@ -706,9 +874,20 @@ re-connect the app with the new token.
 
 ### Step 17 — Disconnect Claude Code
 
-In Git Bash, in `~/roundtable-leader`:
+With the route in Part 3 there is nothing registered to remove:
+the server was supplied for one session only, by `--mcp-config`,
+and was never written to `~/.claude.json`. So disconnecting is
+just ending the session and clearing the token. In the leader
+session type `/exit`, then in the Git Bash window:
 
-**Command:**
+```bash
+unset ROUNDTABLE_TOKEN
+```
+
+Then close the shell.
+
+If you used the add-json fallback in Step 11 instead, the server
+*is* registered — remove it first, from `~/roundtable-leader`:
 
 ```bash
 claude mcp remove roundtable --scope local
@@ -726,8 +905,8 @@ revokes a stored OAuth token. This board uses a static header, so
 there is no OAuth token to log out; revocation is Step 16, on the
 VM. Removing the server alone does not revoke the token.
 
-**Expected:** a confirmation that the server was removed, and
-`claude mcp list` no longer shows `roundtable`.
+**Expected:** a confirmation that the server was removed (fallback
+only), and `claude mcp list` no longer shows `roundtable`.
 
 ### Step 18 — Disconnect Muse
 

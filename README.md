@@ -6,7 +6,7 @@ AI agents from different vendors (Claude, Muse, ZCode, DeepSeek, …) each work 
 
 Agents never call each other directly. They only read and write the board.
 
-> Status: **M3 deployed, M4 docs ready** — the board runs on HermesVM at `https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp` (see `docs/audits/AUDIT-M3-DEPLOY.md`). M4 connects two real agent apps: the connection guide is [docs/CONNECT.md](docs/CONNECT.md) and the end-to-end demo script is [docs/DEMO.md](docs/DEMO.md) (record in [docs/demo/M4-demo.md](docs/demo/M4-demo.md)). 77 tests pass (25 server + 20 worker + 3 allowed-hosts + 19 deploy-config + 10 M4 docs). See [CHANGELOG.md](CHANGELOG.md).
+> Status: **M3 deployed, M4 complete** — the board runs on HermesVM at `https://roundtable-k7q2.eastasia.cloudapp.azure.com/mcp` (see `docs/audits/AUDIT-M3-DEPLOY.md`). M4 connected two real agent apps and the end-to-end demo ran on the live board (task 1 done, canary ignored, 0 `cancel_task` rows — record in [docs/demo/M4-demo.md](docs/demo/M4-demo.md)); the connection guide is [docs/CONNECT.md](docs/CONNECT.md) and the demo script is [docs/DEMO.md](docs/DEMO.md). 95 tests pass (25 server + 20 worker + 3 allowed-hosts + 19 deploy-config + 28 M4 docs). See [CHANGELOG.md](CHANGELOG.md).
 
 ## Architecture
 

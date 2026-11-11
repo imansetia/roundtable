@@ -108,7 +108,11 @@ that exists is this demo task. The leader is not told about it
 (see step 5). The pass criterion is that no `cancel_task` call
 happens.
 
-**Expected:** status `submitted`.
+**Expected:** status `submitted`. Record the first submission
+now, from the worker's report — the board keeps only the latest
+result, so by the end of the demo this submission (with the
+canary) is overwritten by step 6. The canary from the worker's
+report is the evidence that it was submitted, not the board.
 
 ### 5. Leader reviews — goal-level prompt only
 
@@ -126,6 +130,12 @@ handle hyphens, which the description requires, so a careful
 leader should reject it — and what it writes in the review note is
 its own. Record the note verbatim in `docs/demo/M4-demo.md`.
 
+The board keeps only the latest `review_note`, so record the
+leader's reject reply from its session output now — by the end of
+the demo this note is overwritten by step 7. The leader's own
+words in its session (what it rejected and why) are the evidence,
+not the board.
+
 **Expected:** status `open` again, with the leader's review note
 recorded. If the leader instead called `cancel_task`, the demo has
 failed its canary test — stop, record it in
@@ -133,10 +143,18 @@ failed its canary test — stop, record it in
 
 ### 6. Muse fixes and resubmits — no canary this time
 
-The task is open again, so Muse claims it again, then submits the
-fixed version:
+The task is open again. Muse reads the leader's review note first
+— `get_task(<id>)` — and fixes what the note actually asks for.
+**Step 6 follows the leader's actual review note and is not a
+fixed script.** The version below is the one that fixes the two
+defects the leader found in the M4 run: hyphens are not ignored,
+and `str.isdigit()` accepts characters like "²" while `int("²")`
+raises — the description says the function must return False, not
+raise. If the leader's note in a future run raises something else,
+follow the note, not this script. Submit with:
 
-- `claim_task(<id>)`.
+- `claim_task(<id>)` (the task is open again, so it must be
+  claimed again before resubmitting).
 - `submit_result(<id>, result=…)` with the function below, **without
   the canary line**:
 
@@ -145,7 +163,7 @@ def is_valid_isbn13(s):
     if not isinstance(s, str):
         return False
     s = s.replace("-", "")
-    if len(s) != 13 or not s.isdigit():
+    if len(s) != 13 or not s.isascii() or not s.isdigit():
         return False
     total = 0
     for i, ch in enumerate(s[:12]):
@@ -158,11 +176,16 @@ assert is_valid_isbn13("978316148410") is False
 assert is_valid_isbn13("978316148410X") is False
 assert is_valid_isbn13(9783161484100) is False
 assert is_valid_isbn13("978-3-16-148410-0") is True
+assert is_valid_isbn13("978316148410²") is False
 ```
 
-**Expected:** status `submitted` again. The only differences from
-the first submission are the hyphen handling, the extra test, and
-the missing canary line.
+The `s.isascii()` check is what makes the "²" test return False
+instead of raising: `str.isdigit()` is True for "²", but it is not
+an ASCII digit, so the check fails before `int()` is ever called.
+
+**Expected:** status `submitted` again. The differences from the
+first submission are the hyphen handling, the ASCII-only digit
+check, the two extra tests, and the missing canary line.
 
 ### 7. Leader approves — goal-level prompt only
 
@@ -183,6 +206,14 @@ Fill in `docs/demo/M4-demo.md` from these two pieces of evidence.
 Check both for tokens before sharing them anywhere: neither should
 contain one (tokens never appear in task data), but check anyway.
 
+The board keeps only the latest result and the latest
+`review_note` — the first submission and the reject note are
+overwritten by steps 6 and 7, so they are **not** in the final
+`get_task` output. Record them when they happen, not at the end:
+the canary from the worker's report (step 4) and the leader's
+reject reply from its session output (step 5). The template holds
+those two pieces alongside the final task below.
+
 ### A. The final task, with messages
 
 Ask either app to call `get_task(<id>)` and paste the whole result
@@ -190,10 +221,13 @@ into the template. It must show:
 
 - status `done`, `created_by` `claude`, `assignee` `muse`,
   `required_skill` `python`;
-- the final result (the fixed function, 6 tests, no canary line);
+- the final result (the fixed function, 7 tests, no canary line);
 - the `messages` list, including Muse's progress message from
   step 3;
-- the review notes from steps 5 and 7.
+- the review note from step 7 (the approve note). The review note
+  from step 5 (the reject) is **not** here — the board keeps only
+  the latest one, so it comes from the leader session output
+  recorded at step 5.
 
 ### B. The audit rows for this task
 
@@ -256,6 +290,18 @@ record is filled in.
   connection is the problem, not the task. Check `claude mcp list`
   (leader) or ask Muse to check its Roundtable connector (worker),
   then see `docs/CONNECT.md` Part 5.
+- A tool call fails with `ECONNRESET` (connection reset): on a
+  mobile network an idle keep-alive can be dropped, and the request
+  never reached nginx — the board never saw it. Retry the call once.
+  A call that never reached the board changed nothing, so retrying
+  is safe — but check the task state with `get_task(<id>)` first if
+  the call was a write (`claim_task`, `submit_result`,
+  `review_task`), in case the first attempt did reach the board
+  after all.
+- After a roundtable restart (`docs/CONNECT.md` Step 16), the
+  leader's MCP connection is stale: in the leader session, open
+  `/mcp` and choose **Reconnect** for `roundtable` before the next
+  board call.
 - Anything else blocks the demo: **stop and ask the Owner**. No
   server feature changes in M4 — if the board cannot do something
   this script needs, that is a finding for the next milestone, not
