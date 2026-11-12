@@ -246,3 +246,13 @@ def test_m5_updating_section():
     assert "restart roundtable" in " ".join(updating.split()).lower()
     assert "Reconnect" in updating
     assert "scripts/copy-worker-token.sh" in updating
+    # R3: if the migration itself failed, restore the backup too.
+    assert "Step 44" in updating
+
+
+def test_r4_git_bash_entry_in_part11():
+    # R4: bare `bash` in PowerShell starts WSL, not Git Bash. The
+    # outside checks in Part 11 say how to enter Git Bash.
+    outside = section("From outside the VM (your own computer, not the VM)")
+    assert "bash.exe" in outside
+    assert "WSL" in outside

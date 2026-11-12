@@ -88,36 +88,48 @@ def _migrate_messages_table(conn: sqlite3.Connection) -> None:
     sql = row[0] or ""
     columns = [r[1] for r in conn.execute("PRAGMA table_info(messages)")]
     if "'review'" not in sql:
-        conn.execute(
-            "CREATE TABLE messages_new ("
-            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "task_id INTEGER NOT NULL REFERENCES tasks(id), "
-            "author TEXT NOT NULL, "
-            "kind TEXT NOT NULL "
-            "CHECK (kind IN ('progress', 'help_request', 'reply', 'note', 'review')), "
-            "body TEXT NOT NULL, "
-            "decision TEXT CHECK (decision IN ('approved', 'rejected')), "
-            "created_at TEXT NOT NULL)"
-        )
-        conn.execute(
-            "INSERT INTO messages_new "
-            "(id, task_id, author, kind, body, created_at) "
-            "SELECT id, task_id, author, kind, body, created_at FROM messages"
-        )
-        conn.execute("DROP TABLE messages")
-        conn.execute("ALTER TABLE messages_new RENAME TO messages")
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id)"
-        )
-        # DROP + RENAME do not reliably carry the AUTOINCREMENT
-        # sequence, so pin it to the largest id copied over.
-        # (sqlite_sequence has no PRIMARY KEY, so no ON CONFLICT.)
-        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'messages'")
-        conn.execute(
-            "INSERT INTO sqlite_sequence (name, seq) VALUES ('messages', "
-            "(SELECT COALESCE(MAX(id), 0) FROM messages))"
-        )
-        conn.commit()
+        # R1: crash-safe. A previous run may have died after creating
+        # messages_new, so drop any leftover first; then run the whole
+        # rebuild in one explicit transaction, so a crash in the
+        # middle rolls back instead of leaving the table half-moved.
+        # A failed migration raises here and blocks startup loudly —
+        # the Owner restores the backup (DEPLOY.md Step 44).
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DROP TABLE IF EXISTS messages_new")
+            conn.execute(
+                "CREATE TABLE messages_new ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "task_id INTEGER NOT NULL REFERENCES tasks(id), "
+                "author TEXT NOT NULL, "
+                "kind TEXT NOT NULL "
+                "CHECK (kind IN ('progress', 'help_request', 'reply', 'note', 'review')), "
+                "body TEXT NOT NULL, "
+                "decision TEXT CHECK (decision IN ('approved', 'rejected')), "
+                "created_at TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO messages_new "
+                "(id, task_id, author, kind, body, created_at) "
+                "SELECT id, task_id, author, kind, body, created_at FROM messages"
+            )
+            conn.execute("DROP TABLE messages")
+            conn.execute("ALTER TABLE messages_new RENAME TO messages")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id)"
+            )
+            # DROP + RENAME do not reliably carry the AUTOINCREMENT
+            # sequence, so pin it to the largest id copied over.
+            # (sqlite_sequence has no PRIMARY KEY, so no ON CONFLICT.)
+            conn.execute("DELETE FROM sqlite_sequence WHERE name = 'messages'")
+            conn.execute(
+                "INSERT INTO sqlite_sequence (name, seq) VALUES ('messages', "
+                "(SELECT COALESCE(MAX(id), 0) FROM messages))"
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
     elif "decision" not in columns:
         # CHECK already allows 'review' but the column is missing
         # (an intermediate state): a plain ADD COLUMN is enough.

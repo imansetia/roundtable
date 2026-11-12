@@ -5,6 +5,7 @@ doc may contain a literal token."""
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -240,6 +241,12 @@ def test_connect_bash_entry_and_helper_scripts():
     assert "scripts/leader-token.sh" in CONNECT
     assert "scripts/start-leader.sh" in CONNECT
     assert "scripts/copy-worker-token.sh" in CONNECT
+    # R4: bare `bash` in PowerShell starts WSL, not Git Bash (seen
+    # live: "execvpe(/bin/bash) failed"). The guide always enters
+    # Git Bash with the full path, then cds to the repo folder.
+    assert "cd ~/Projects/roundtable" in CONNECT_FLAT
+    assert "WSL" in CONNECT
+    assert "execvpe(/bin/bash) failed" in CONNECT
 
 
 def test_scripts_have_no_token():
@@ -285,22 +292,29 @@ def test_scripts_are_lf_only():
     assert "scripts/** text eol=lf" in attrs
     for path in sorted((ROOT / "scripts").glob("*.sh")):
         rel = path.relative_to(ROOT).as_posix()
-        # The blob git would store for this file (`hash-object` then
-        # `cat-file`), not just the working tree: that is what a
-        # Windows checkout with core.autocrlf=true receives.
-        hashed = subprocess.run(
-            ["git", "hash-object", str(path)],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-        )
-        if hashed.returncode == 0:
-            blob = subprocess.run(
-                ["git", "cat-file", "blob", hashed.stdout.strip()],
+        # R2: in a source export without git history there is no blob
+        # to check, so skip the blob check there (the working-tree
+        # check below still runs). The blob is what a Windows checkout
+        # with core.autocrlf=true receives, so check it when git is
+        # available.
+        if shutil.which("git") is not None and (ROOT / ".git").exists():
+            # The blob git would store for this file (`hash-object`
+            # then `cat-file`), not just the working tree.
+            hashed = subprocess.run(
+                ["git", "hash-object", str(path)],
                 cwd=ROOT,
                 capture_output=True,
+                text=True,
             )
-            data = blob.stdout if blob.returncode == 0 else path.read_bytes()
+            if hashed.returncode == 0:
+                blob = subprocess.run(
+                    ["git", "cat-file", "blob", hashed.stdout.strip()],
+                    cwd=ROOT,
+                    capture_output=True,
+                )
+                data = blob.stdout if blob.returncode == 0 else path.read_bytes()
+            else:
+                data = path.read_bytes()
         else:
             data = path.read_bytes()
         assert b"\r" not in data, rel

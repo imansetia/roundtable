@@ -226,35 +226,34 @@ def test_m5_audit_log_has_one_review_task_row_per_call(server):
 
 # -- M5: migration of an M4 database ---------------------------------------
 
-def test_m5_migrates_m4_database(tmp_path):
-    """A database created by M4 (messages kind CHECK without 'review',
-    no decision column) must still start, keep its messages, and gain
-    review history on first run. Existing tasks get no back-filled
-    history."""
-    tmp = tmp_path
+M4_SCHEMA = """
+CREATE TABLE agents (name TEXT PRIMARY KEY, role TEXT NOT NULL
+    CHECK (role IN ('leader', 'worker')), skills TEXT NOT NULL DEFAULT '[]',
+    last_seen TEXT, active INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '', required_skill TEXT,
+    status TEXT NOT NULL DEFAULT 'open'
+        CHECK (status IN ('open', 'claimed', 'submitted', 'done', 'cancelled')),
+    created_by TEXT NOT NULL, assignee TEXT, result TEXT, review_note TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id), author TEXT NOT NULL,
+    kind TEXT NOT NULL
+        CHECK (kind IN ('progress', 'help_request', 'reply', 'note')),
+    body TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL,
+    task_id INTEGER, outcome TEXT NOT NULL);
+CREATE INDEX idx_messages_task ON messages(task_id);
+"""
+
+
+def build_m4_db(tmp: Path) -> Path:
+    """A database as M4 created it: one submitted task, one progress
+    message, and the old messages CHECK (no 'review')."""
     db_path = tmp / "roundtable.db"
-    m4_schema = """
-    CREATE TABLE agents (name TEXT PRIMARY KEY, role TEXT NOT NULL
-        CHECK (role IN ('leader', 'worker')), skills TEXT NOT NULL DEFAULT '[]',
-        last_seen TEXT, active INTEGER NOT NULL DEFAULT 1);
-    CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '', required_skill TEXT,
-        status TEXT NOT NULL DEFAULT 'open'
-            CHECK (status IN ('open', 'claimed', 'submitted', 'done', 'cancelled')),
-        created_by TEXT NOT NULL, assignee TEXT, result TEXT, review_note TEXT,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-    CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id INTEGER NOT NULL REFERENCES tasks(id), author TEXT NOT NULL,
-        kind TEXT NOT NULL
-            CHECK (kind IN ('progress', 'help_request', 'reply', 'note')),
-        body TEXT NOT NULL, created_at TEXT NOT NULL);
-    CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT,
-        time TEXT NOT NULL, agent TEXT NOT NULL, tool TEXT NOT NULL,
-        task_id INTEGER, outcome TEXT NOT NULL);
-    CREATE INDEX idx_messages_task ON messages(task_id);
-    """
     with sqlite3.connect(db_path) as conn:
-        conn.executescript(m4_schema)
+        conn.executescript(M4_SCHEMA)
         conn.execute(
             "INSERT INTO agents (name, role, skills) VALUES "
             "('planner', 'leader', '[]'), ('coder', 'worker', '[]')"
@@ -270,6 +269,16 @@ def test_m5_migrates_m4_database(tmp_path):
             "'2026-11-11T00:00:00Z')"
         )
         conn.commit()
+    return db_path
+
+
+def test_m5_migrates_m4_database(tmp_path):
+    """A database created by M4 (messages kind CHECK without 'review',
+    no decision column) must still start, keep its messages, and gain
+    review history on first run. Existing tasks get no back-filled
+    history."""
+    tmp = tmp_path
+    db_path = build_m4_db(tmp)
     port = free_port()
     proc, url, _ = start_server(tmp, port, AGENTS)
     try:
@@ -296,5 +305,33 @@ def test_m5_migrates_m4_database(tmp_path):
         # message plus the one review just made.
         err, data = call(url, LEADER, "get_task", {"task_id": 1})
         assert len(data["task"]["messages"]) == 2
+    finally:
+        stop_server(proc)
+
+
+def test_m5_leftover_messages_new_does_not_block_startup(tmp_path):
+    """R1: a previous migration run may have died after creating
+    messages_new. A leftover table must not block the next start."""
+    tmp = tmp_path
+    db_path = build_m4_db(tmp)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE messages_new (id INTEGER PRIMARY KEY "
+            "AUTOINCREMENT, task_id INTEGER NOT NULL, author TEXT NOT "
+            "NULL, kind TEXT NOT NULL, body TEXT NOT NULL, decision "
+            "TEXT, created_at TEXT NOT NULL)"
+        )
+        conn.commit()
+    port = free_port()
+    proc, url, _ = start_server(tmp, port, AGENTS)
+    try:
+        # Startup succeeded and the migration completed: a review
+        # stores a review message on the migrated DB.
+        err, data = call(
+            url, LEADER, "review_task",
+            {"task_id": 1, "approve": True, "review_note": "ok"},
+        )
+        assert not err, data
+        assert len(review_messages(url, 1)) == 1
     finally:
         stop_server(proc)

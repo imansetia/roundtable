@@ -29,6 +29,15 @@ a **separate window** (not the Claude app's own terminal panel):
 & "C:\Program Files\Git\bin\bash.exe" --login
 ```
 
+Never type bare `bash` in PowerShell: on this PC that starts WSL,
+not Git Bash (seen live: `execvpe(/bin/bash) failed`). Always use
+the full path above. Once you are in Git Bash, go to the repo
+folder first — every script in this guide runs from there:
+
+```bash
+cd ~/Projects/roundtable
+```
+
 Long pasted commands fail in that window: the terminal inserts
 bracketed-paste markers (`[200~` … `~`) around a long paste and
 the command breaks. So this guide ships small helper scripts with
@@ -301,10 +310,11 @@ copy. After pasting the token into the app, open Win+V, choose
 guide) so the token is not the most recent item either.
 
 **Prefer no display at all for Claude Code.** The leader token
-never needs to appear on screen. From the repo folder in Git Bash,
-**type** (do not paste) this short command — it sources a helper
-script that fetches the token straight from the VM into the shell
-variable:
+never needs to appear on screen. In Git Bash, in
+`~/Projects/roundtable` (enter Git Bash with the full command from
+the intro, then `cd ~/Projects/roundtable`), **type** (do not
+paste) this short command — it sources a helper script that
+fetches the token straight from the VM into the shell variable:
 
 ```bash
 source scripts/leader-token.sh
@@ -317,7 +327,7 @@ never typed, and never written to a file. It must be **sourced**,
 not run as `bash scripts/leader-token.sh`: a sourced script sets
 the variable in your shell, while a run script sets it in a child
 shell that exits at once. If the script is not in the repo folder
-you are in, `cd` to the repo first; pass another VM host as the
+you are in, `cd ~/Projects/roundtable` first; pass another VM host as the
 first argument (or set `$VM_HOST`) if the default does not fit.
 
 If the script fails, the same route as one inline command (the
@@ -336,8 +346,8 @@ for Muse (its secure entry card needs a paste) and as the fallback
 if this one fails.
 
 **For Muse, copy with no display too.** The worker token also
-never needs to appear on screen: from the repo folder in Git Bash,
-type:
+never needs to appear on screen: in the same Git Bash window, in
+`~/Projects/roundtable`, type:
 
 ```bash
 bash scripts/copy-worker-token.sh
@@ -418,9 +428,10 @@ into a project folder.
 
 ### Step 7 — Make an empty folder for the leader session
 
-On the Owner's computer, in a **separate Git Bash window** (not
-the Claude app's own terminal panel — see the intro), in the
-folder where you keep the repo:
+On the Owner's computer, in a **separate Git Bash window** — enter
+it with `& "C:\Program Files\Git\bin\bash.exe" --login` from
+PowerShell (never bare `bash` — that starts WSL), not the Claude
+app's own terminal panel — then run:
 
 **Command:**
 
@@ -461,8 +472,10 @@ normal. If it seems to stall on a slow network (in the run, a
 0-byte download sat in `~/.claude/downloads` and nothing moved),
 cancel it with `Ctrl+C` and run the installer again.
 
-Then verify the install from **bash** (open Git Bash, or the
-window from the intro): type
+Then verify the install from Git Bash: enter it with
+`& "C:\Program Files\Git\bin\bash.exe" --login` from PowerShell
+(never bare `bash` — that starts WSL), then `cd
+~/Projects/roundtable`, then type
 
 ```bash
 claude --version
@@ -483,8 +496,8 @@ tunnel off, not on.
 
 ### Step 9 — Give this shell the leader token (never typed, never stored)
 
-In the same Git Bash window, in the repo folder (the helper script
-lives in `scripts/` there):
+In the same Git Bash window, in `~/Projects/roundtable` (the helper
+script lives in `scripts/` there):
 
 **Command — type it, do not paste it:**
 
@@ -524,7 +537,7 @@ by design.
 
 ### Step 10 — Start the leader with only the roundtable server, prompts on
 
-In the same Git Bash window, in the repo folder:
+In the same Git Bash window, in `~/Projects/roundtable`:
 
 **Command — type it, do not paste it:**
 
@@ -591,8 +604,8 @@ session and run it again from the same shell (check the variable
 is still set first — see below).
 
 If the server shows `✘ Failed to connect`, first check the
-variable is actually set in **this** shell. Open a new Git Bash
-window is not enough — the variable lives only in the shell that
+variable is actually set in **this** shell. Opening a new Git Bash
+window does not help — the variable lives only in the shell that
 ran Step 9 — so in that shell run:
 
 ```bash
@@ -706,7 +719,7 @@ keep-alive can be dropped before the call goes out. Retry the call
 once — a call that never reached the board changed nothing. If it
 still fails, re-check the connection in Step 11.
 
-Then, in Git Bash (outside the session), the two negative checks.
+Then, in the same Git Bash window (outside the session), the two negative checks.
 They need no real token — the second uses a deliberately wrong one:
 
 ```bash
@@ -750,8 +763,9 @@ In the main chat with Muse (this app), send exactly:
 
 **What happens next:** Muse sets up the connection and shows a
 secure entry card for the credential. Copy the **worker** token
-(the `muse` token) with no display first — from the repo folder
-in Git Bash, type:
+(the `muse` token) with no display first — in Git Bash, in
+`~/Projects/roundtable` (enter Git Bash with the full command from
+the intro, then `cd ~/Projects/roundtable`), type:
 
 ```bash
 bash scripts/copy-worker-token.sh
@@ -878,7 +892,7 @@ With the route in Part 3 there is nothing registered to remove:
 the server was supplied for one session only, by `--mcp-config`,
 and was never written to `~/.claude.json`. So disconnecting is
 just ending the session and clearing the token. In the leader
-session type `/exit`, then in the Git Bash window:
+session type `/exit`, then in the same Git Bash window:
 
 ```bash
 unset ROUNDTABLE_TOKEN

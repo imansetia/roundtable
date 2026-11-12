@@ -1327,9 +1327,14 @@ commit:
    current one out with `scripts/copy-worker-token.sh` (see
    `docs/CONNECT.md` Step 14) and paste it into Muse's secure
    entry card (field "Kunci API"). If the service fails to start,
-   roll back (Step 47) rather than guessing.
+   roll back (Step 47) rather than guessing. If the migration
+   itself failed (the log shows a database error), restore the
+   backup (Step 44) as well as rolling back (Step 47) — the
+   rollback alone only restores the code; the database stays
+   migrated. (M4 code runs fine on a migrated table, so a rollback
+   without a restore is only for code problems.)
 
-**Undo:** Step 47.
+**Undo:** Step 47 (and Step 44 if the migration failed).
 
 ### Step 47 — Roll back to the previous version
 
@@ -1458,7 +1463,9 @@ sudo certbot renew --dry-run
 
 ### From outside the VM (your own computer, not the VM)
 
-Run these in a POSIX shell (Git Bash on Windows) or with `curl.exe`
+Run these in a POSIX shell — on Windows, enter Git Bash with
+`& "C:\Program Files\Git\bin\bash.exe" --login` from PowerShell
+(never bare `bash`: that starts WSL) — or with `curl.exe`
 on Windows — PowerShell 5.1 treats `curl` as an alias for
 `Invoke-WebRequest`, so the `-s`, `-o` and `-w` flags below fail
 there.
