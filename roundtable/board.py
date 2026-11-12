@@ -29,6 +29,14 @@ Interpretations (documented in CHANGELOG.md, not silent scope changes):
   "review" is rejected for every agent. ``tasks.review_note`` keeps
   its current meaning (the latest note). Existing tasks get no
   back-filled history.
+- M6 (Owner decision, 2026-11-12): complete activity history.
+  Every successful ``submit_result`` also stores one row in the
+  append-only ``submissions`` table (author, time, full result) in
+  the same transaction as the status change; ``tasks.result`` keeps
+  its meaning (the latest). Only ``submit_result`` writes that
+  table, so no agent can forge a submission. The audit log gains
+  the call's arguments (JSON, at most 64 KB) and, on error, the
+  error message — written by the server wrapper, never by a tool.
 - The spec diagram mentions "leader reassigns" as a claimed -> open path,
   but section 6 defines no reassign tool, so M1 does not add one; a leader
   can cancel a claimed task and create a replacement instead. Settled by
@@ -168,6 +176,22 @@ class Board:
             for r in rows
         ]
 
+    def _submissions_for(self, task_id: int) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM submissions WHERE task_id = ? ORDER BY id ASC",
+            (task_id,),
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "task_id": r["task_id"],
+                "author": r["author"],
+                "result": r["result"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+
     def _require_leader(self, agent: Agent) -> None:
         if agent.role != "leader":
             raise RoundtableError(
@@ -184,14 +208,26 @@ class Board:
 
     # -- audit / presence --------------------------------------------------
     def log_audit(
-        self, agent_name: str, tool: str, task_id: int | None, outcome: str
+        self,
+        agent_name: str,
+        tool: str,
+        task_id: int | None,
+        outcome: str,
+        arguments_json: str | None = None,
+        error: str | None = None,
     ) -> None:
-        """Append one audit row. Append-only: no tool ever updates/deletes it."""
+        """Append one audit row. Append-only: no tool ever updates/deletes it.
+
+        M6: every row also carries the call's arguments as JSON
+        (at most 64 KB, cut with a marker — see server.py) and, on a
+        failed call, the error message. The caller's identity comes
+        from the token; no token or Authorization header is ever
+        stored here."""
         with self._lock:
             self._conn.execute(
-                "INSERT INTO audit_log (time, agent, tool, task_id, outcome) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (_now(), agent_name, tool, task_id, outcome),
+                "INSERT INTO audit_log (time, agent, tool, task_id, outcome, "
+                "arguments, error) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (_now(), agent_name, tool, task_id, outcome, arguments_json, error),
             )
             self._conn.commit()
 
@@ -320,6 +356,7 @@ class Board:
             row = self._get_task_row(task_id)
             task = self._task_dict(row)
             task["messages"] = self._messages_for(task_id)
+            task["submissions"] = self._submissions_for(task_id)
         return task
 
     def claim_task(self, agent: Agent, task_id: int) -> dict:
@@ -434,6 +471,16 @@ class Board:
                 "UPDATE tasks SET status = 'submitted', result = ?, "
                 "updated_at = ? WHERE id = ?",
                 (result, _now(), task_id),
+            )
+            # M6: every successful submission is kept, not only the
+            # latest — one row in the append-only submissions table,
+            # in the same transaction as the status change. Only this
+            # method writes that table, so no agent can forge a
+            # submission. tasks.result keeps its meaning (the latest).
+            self._conn.execute(
+                "INSERT INTO submissions (task_id, author, result, "
+                "created_at) VALUES (?, ?, ?, ?)",
+                (task_id, agent.name, result, _now()),
             )
             self._conn.commit()
             return self._task_dict(self._get_task_row(task_id))

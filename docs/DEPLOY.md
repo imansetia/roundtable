@@ -1357,6 +1357,60 @@ afterwards, get its hash from the Auditor, set it as
 
 **Undo:** Step 46.
 
+### Updating to M6
+
+M6 adds complete activity history: every submission is kept in a
+new `submissions` table, and every tool call leaves an audit row
+with its arguments (at most 64 KB) and, on error, the error
+message (see CHANGELOG.md "M6"). The update itself is the normal
+one — back up first, then Step 46 with the new audited commit:
+
+1. **Back up the database first (Step 43).** Do not skip this:
+   the migration adds columns to `audit_log` and a new table, and
+   the backup is the way back.
+2. **Record the current version (Step 45)**, then set
+   `$AUDITED_COMMIT` to the hash the Auditor gives you for M6 and
+   run **Step 46** (fetch, check out, reinstall, restart
+   Roundtable only). Nothing else is restarted — Hermes, nginx
+   and certbot are untouched.
+3. **Verify:** Step 24 (local 401 check) and Step 41
+   (authenticated check through nginx) must pass, and the service
+   must show `Active: active (running)`. The migration runs on
+   first start; existing rows are kept and get no back-filled
+   history.
+4. **Reconnect both apps.** The restart drops the leader's MCP
+   connection: in the leader session, open `/mcp` and choose
+   **Reconnect** for `roundtable`. Muse needs the new worker token
+   — the old one was rotated after the M4 demo, so take the
+   current one out with `scripts/copy-worker-token.sh` (see
+   `docs/CONNECT.md` Step 14) and paste it into Muse's secure
+   entry card (field "Kunci API"). If the service fails to start,
+   roll back (Step 47) rather than guessing. If the migration
+   itself failed (the log shows a database error), restore the
+   backup (Step 44) as well as rolling back (Step 47) — the
+   rollback alone only restores the code; the database stays
+   migrated.
+
+**Database growth.** History is kept forever, so the database
+grows with use: every submission stores the full result (up to
+20 KB), and every audit row stores up to 64 KB of arguments. A
+busy board can grow by megabytes per month. Check its size with:
+
+```bash
+sudo -u roundtable du -h /srv/roundtable/data/roundtable.db
+```
+
+and see what is in it with (read-only, as `roundtable`):
+
+```bash
+sudo -u roundtable sqlite3 -readonly /srv/roundtable/data/roundtable.db "SELECT COUNT(*) FROM submissions; SELECT COUNT(*) FROM audit_log;"
+```
+
+There is no pruning yet — that is a decision for the Owner, not
+something this update does on its own.
+
+**Undo:** Step 47 (and Step 44 if the migration failed).
+
 ### Step 48 — Full uninstall (removes only Roundtable's things)
 
 Run these in order. **Back up the database first (Step 43)** — after

@@ -256,3 +256,20 @@ def test_r4_git_bash_entry_in_part11():
     outside = section("From outside the VM (your own computer, not the VM)")
     assert "bash.exe" in outside
     assert "WSL" in outside
+
+
+def test_m6_updating_section():
+    # M6: the "Updating to M6" section backs up first, updates with
+    # Step 46 to the audited commit, restarts Roundtable only,
+    # reconnects both apps, and says how the database grows and how
+    # to check its size.
+    updating = section("Updating to M6")
+    assert "Step 43" in updating  # back up first
+    assert "Step 46" in updating
+    assert "AUDITED_COMMIT" in updating
+    assert "restart roundtable" in " ".join(updating.split()).lower()
+    assert "Reconnect" in updating
+    assert "scripts/copy-worker-token.sh" in updating
+    # R3: if the migration itself failed, restore the backup too.
+    assert "Step 44" in updating
+    assert "du -h" in updating or "ls -lh" in updating

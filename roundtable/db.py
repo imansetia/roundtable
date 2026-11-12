@@ -41,17 +41,33 @@ CREATE TABLE IF NOT EXISTS messages (
     decision TEXT CHECK (decision IN ('approved', 'rejected')),
     created_at TEXT NOT NULL
 );
+-- M6: every submission is kept, not only the latest (see SPEC.md
+-- section 5). A submission is not a message — it carries a full
+-- result (up to 20,000 chars, vs a message's 4,000) and is written
+-- only by submit_result — so it lives in its own append-only table
+-- instead of stretching the messages CHECK again one milestone
+-- after M5. tasks.result keeps its meaning (the latest).
+CREATE TABLE IF NOT EXISTS submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    author TEXT NOT NULL,
+    result TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     time TEXT NOT NULL,
     agent TEXT NOT NULL,
     tool TEXT NOT NULL,
     task_id INTEGER,
-    outcome TEXT NOT NULL
+    outcome TEXT NOT NULL,
+    arguments TEXT,
+    error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee);
 CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_task ON submissions(task_id);
 CREATE INDEX IF NOT EXISTS idx_audit_agent ON audit_log(agent);
 """
 
@@ -70,7 +86,25 @@ def connect(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE agents ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
         conn.commit()
     _migrate_messages_table(conn)
+    _migrate_audit_log(conn)
     return conn
+
+
+def _migrate_audit_log(conn: sqlite3.Connection) -> None:
+    """M6: audit_log gains `arguments` (the call's arguments as JSON)
+    and `error` (the error message, on failed calls). Each ADD COLUMN
+    is a single atomic statement and runs only if the column is
+    missing, so a crash between the two just leaves the second for
+    the next start. The submissions table comes from SCHEMA above
+    (CREATE TABLE IF NOT EXISTS). No back-fill: old rows keep
+    arguments and error NULL."""
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(audit_log)")]
+    if "arguments" not in columns:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN arguments TEXT")
+        conn.commit()
+    if "error" not in columns:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN error TEXT")
+        conn.commit()
 
 
 def _migrate_messages_table(conn: sqlite3.Connection) -> None:

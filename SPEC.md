@@ -39,6 +39,16 @@ Agents never call each other directly. They only read and write the board.
 
 **messages**: id, task_id, author, kind (`progress` | `help_request` | `reply` | `note` | `review`), body, decision (`approved` | `rejected`, only on review messages; null otherwise), created_at.
 
+**submissions**: id, task_id, author, result, created_at. One row per
+successful `submit_result`, in order — every submission is kept, not
+only the latest. A submission is not a message: it carries a full
+result (up to 20,000 chars, vs a message's 4,000) and is written
+only by `submit_result`, so it lives in its own append-only table
+instead of stretching the messages kinds again. `tasks.result`
+keeps its meaning (the latest result).
+
+**audit_log**: append-only; one row per tool call: time, agent, tool, task_id, outcome, arguments (the call's arguments as JSON, at most 64 KB — a larger payload is stored cut, with a marker naming the original size in bytes), error (the error message, on failed calls; null otherwise). Never updated or deleted by any tool. No tool reads it; it is read on the VM only.
+
 Review messages are written only by the server, one per successful
 `review_task`: the author is the leader, the body is the review
 note, and `decision` is `approved` or `rejected` — the decision is
@@ -50,8 +60,6 @@ the decision field is the record. `tasks.review_note` keeps its
 current meaning (the latest note). Review messages are untrusted
 content like every other message. Existing tasks get no back-filled
 history.
-
-**audit_log**: append-only; one row per tool call: time, agent, tool, task_id, outcome. Never updated or deleted by any tool.
 
 ### Task states
 
@@ -72,11 +80,11 @@ any non-final state -> cancelled     (leader only)
 | `list_agents` | all | Names, roles, skills, last_seen. |
 | `create_task` | leader | Creates an `open` task. Optional `assignee` to assign directly. |
 | `list_tasks` | all | Filter by status / assignee. Paginated. |
-| `get_task` | all | One task with its messages. |
+| `get_task` | all | One task with its messages and submissions. |
 | `claim_task` | worker | `open` -> `claimed`. Must be atomic: if two agents claim at once, exactly one succeeds. |
 | `release_task` | assignee | `claimed` -> `open`. |
 | `post_message` | all | Adds a progress note, help request, or reply to a task. kind `review` is reserved for the server and is rejected. |
-| `submit_result` | assignee | `claimed` -> `submitted`, stores the result. |
+| `submit_result` | assignee | `claimed` -> `submitted`, stores the result. Also stores a submission (every submission is kept, in order). |
 | `review_task` | leader | `submitted` -> `done`, or -> `open` with a review note. Also stores a review message (kind `review`) with the decision. |
 | `cancel_task` | leader | Cancels a non-final task. |
 
@@ -91,7 +99,8 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 5. Server binds to `127.0.0.1` by default. Public exposure only behind HTTPS (reverse proxy); document this in the README.
 6. No secrets in logs. Tokens are compared in constant time.
 7. The server makes no outbound network requests.
-8. A worker cannot read tokens, change roles, edit another agent's messages, or modify the audit log.
+8. A worker cannot read tokens, change roles, edit another agent's messages, or modify the audit log. No tool reads the audit log, and no tool updates or deletes history rows (submissions, review messages, audit rows) — history is append-only and is read on the VM only.
+9. Call history: every tool call leaves one audit row with the call's arguments as JSON and, on error, the error message. The caller's identity stays from the token; no token or Authorization header is ever stored. At most 64 KB of arguments per row; a larger payload is stored cut, with a marker naming the original size in bytes. That truncation applies only to this log; board data is still rejected, not truncated.
 
 ## 8. Worker script (for API-only models)
 
@@ -116,6 +125,8 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 9. Every tool call above produces an audit_log row.
 10. A tool argument trying to set the caller's identity is ignored or rejected.
 11. (M5) Reject then approve gives two review messages in order, with the right decisions and authors; the audit log has exactly one `review_task` row per call.
+12. (M6) Two submissions on one task are both kept, in order, and `tasks.result` is the latest.
+13. (M6) A failed call leaves an audit row with its arguments and the error message; no audit row contains a token; a 100 KB argument is stored cut with the marker.
 
 ## 10. Milestones
 
@@ -124,6 +135,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M3** — Deployment guide (Ubuntu VM, systemd service, HTTPS reverse proxy, firewall). -> Auditor review **before** anything is exposed to the internet.
 - **M4** — Connect two real agent apps as custom MCP connectors; record one end-to-end demo task.
 - **M5** — Permanent review history: every review stores a review message (Owner decision, 2026-11-11). -> Auditor review.
+- **M6** — Complete activity history: every submission is kept, and every tool call is logged with its arguments (Owner decision, 2026-11-12). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.
 

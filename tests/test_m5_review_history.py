@@ -60,11 +60,15 @@ def start_server(tmp: Path, port: int, agents: dict = AGENTS, rate_limit: int = 
             "ROUNDTABLE_RATE_LIMIT_PER_MINUTE": str(rate_limit),
         }
     )
+    # The server's log goes to a file, not a PIPE: uvicorn logs
+    # every request, and an unread PIPE fills up (64 KB) and
+    # blocks the server, which then times out the client. The log
+    # is still available when the server exits early.
     proc = subprocess.Popen(
         [sys.executable, "-m", "roundtable"],
         cwd=str(REPO),
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=open(tmp / "server.log", "wb"),
         stderr=subprocess.STDOUT,
         text=True,
     )
@@ -72,7 +76,7 @@ def start_server(tmp: Path, port: int, agents: dict = AGENTS, rate_limit: int = 
     deadline = time.time() + 20
     while time.time() < deadline:
         if proc.poll() is not None:
-            out = proc.stdout.read() if proc.stdout else ""
+            out = (tmp / "server.log").read_text(errors="replace")
             raise RuntimeError(f"server exited early:\n{out}")
         try:
             with httpx.Client(trust_env=False, timeout=2) as http:

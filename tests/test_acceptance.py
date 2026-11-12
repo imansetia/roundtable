@@ -60,11 +60,15 @@ def start_server(tmp: Path, port: int, rate_limit: int = 60) -> subprocess.Popen
             "ROUNDTABLE_RATE_LIMIT_PER_MINUTE": str(rate_limit),
         }
     )
+    # The server's log goes to a file, not a PIPE: uvicorn logs
+    # every request, and an unread PIPE fills up (64 KB) and
+    # blocks the server, which then times out the client. The log
+    # is still available when the server exits early.
     proc = subprocess.Popen(
         [sys.executable, "-m", "roundtable"],
         cwd=str(REPO),
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=open(tmp / "server.log", "wb"),
         stderr=subprocess.STDOUT,
         text=True,
     )
@@ -72,7 +76,7 @@ def start_server(tmp: Path, port: int, rate_limit: int = 60) -> subprocess.Popen
     deadline = time.time() + 20
     while time.time() < deadline:
         if proc.poll() is not None:
-            out = proc.stdout.read() if proc.stdout else ""
+            out = (tmp / "server.log").read_text(errors="replace")
             raise RuntimeError(f"server exited early:\n{out}")
         try:
             with httpx.Client(trust_env=False, timeout=2) as http:
@@ -382,3 +386,46 @@ def test_13_review_history_two_reviews_in_order(server):
         ("rejected", "planner", "Fix the hyphens"),
         ("approved", "planner", "Looks good"),
     ]
+
+
+def test_14_two_submissions_both_kept_in_order(server):
+    # SPEC section 9, test 12 (M6): two submissions on one task are
+    # both kept, in order, and tasks.result is the latest.
+    url = server["url"]
+    task = make_task(url, "Submission history task")
+    call(url, CODER, "claim_task", {"task_id": task["id"]})
+    call(url, CODER, "submit_result", {"task_id": task["id"], "result": "first try"})
+    err, _ = call(
+        url, LEADER, "review_task",
+        {"task_id": task["id"], "approve": False, "review_note": "try again"},
+    )
+    assert not err
+    call(url, CODER, "claim_task", {"task_id": task["id"]})
+    call(url, CODER, "submit_result", {"task_id": task["id"], "result": "second try"})
+    err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
+    assert not err
+    assert [s["result"] for s in data["task"]["submissions"]] == [
+        "first try", "second try",
+    ]
+    assert all(s["author"] == "coder" for s in data["task"]["submissions"])
+    assert data["task"]["result"] == "second try"
+
+
+def test_15_failed_call_leaves_audit_row_with_arguments_and_error(server):
+    # SPEC section 9, test 13 (M6): a failed call leaves an audit
+    # row with its arguments and the error message.
+    url = server["url"]
+    db = server["db"]
+    task = make_task(url, "Failed call audit task")
+    err, _ = call(url, CODER, "cancel_task", {"task_id": task["id"]})
+    assert err
+    rows = db_rows(
+        db,
+        "SELECT tool, outcome, arguments, error FROM audit_log "
+        "WHERE task_id = ? AND tool = 'cancel_task'",
+        (task["id"],),
+    )
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == "error"
+    assert json.loads(rows[0]["arguments"]) == {"task_id": task["id"]}
+    assert "only the leader" in rows[0]["error"]

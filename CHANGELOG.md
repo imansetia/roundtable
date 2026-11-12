@@ -2,7 +2,89 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
-## M5 (2026-11-11, in progress — code written, not yet audited)
+## M6 (2026-11-12, in progress — code written, not yet audited)
+
+Complete activity history — the Owner's decision of 2026-11-12
+("keep the full history of everything any agent does"). The board
+kept only the latest result, and the audit log kept no arguments,
+so a rejected submission and the exact call that failed were lost.
+
+- **Result history.** Every successful `submit_result` also
+  stores one row in a new append-only `submissions` table
+  (author, time, full result), in the same transaction as the
+  status change. `get_task` returns them as `submissions`, in
+  order. `tasks.result` keeps its meaning (the latest result).
+  Choice, with reasons: a submission is not a message — it carries
+  a full result (up to 20,000 chars, vs a message's 4,000) and is
+  written only by `submit_result` — so it lives in its own table
+  instead of stretching the messages kinds again one milestone
+  after M5 (which would need another table rebuild). Only
+  `submit_result` writes that table, so no agent can forge a
+  submission.
+- **Call history.** Every audit row now also carries the call's
+  arguments as JSON and, on a failed call, the error message — for
+  every tool call, success and error, reads included. The
+  caller's identity stays from the token; no token or
+  Authorization header is ever stored (a test asserts the test
+  tokens never appear in any row). At most 64 KB of arguments per
+  row; a larger payload is stored cut, with a marker object
+  (`truncated: true`, `original_bytes`) — that truncation applies
+  only to this log; board data is still rejected, not truncated.
+- **Append-only.** No tool updates or deletes history rows
+  (submissions, review messages, audit rows). There is still no
+  tool that reads `audit_log`; it is read on the VM only
+  (`sqlite3 -readonly` as `roundtable`).
+- **Untrusted labelling.** History content is untrusted data,
+  written by agents: never executed, never interpreted. The
+  submissions ride in `get_task` under the same
+  `untrusted_content_warning`, and the `get_task` description says
+  so.
+- **Migration.** For an M5 database: `audit_log` gains the two
+  columns (one atomic `ADD COLUMN` each, only if missing — a
+  crash between them just leaves the second for the next start)
+  and the `submissions` table is created (`CREATE TABLE IF NOT
+  EXISTS`). No back-fill: old audit rows keep NULL arguments and
+  error, old tasks get no submissions.
+- **SPEC.md.** Section 5 (`submissions` and `audit_log`),
+  section 6 (`submit_result` and `get_task` rows), section 7
+  (item 8 extended, new item 9), section 9 (two new acceptance
+  tests, 12 and 13) and section 10 (M6 listed), as the Owner's
+  decision.
+- **Deployment.** `docs/DEPLOY.md` gains "Updating to M6": back
+  up first (Step 43), Step 46 with the new audited commit, restart
+  Roundtable only, reconnect both apps, restore the backup
+  (Step 44) as well as rolling back (Step 47) if the migration
+  itself failed, and the expected database growth with how to
+  check its size (`du -h` and the row counts).
+- **Tests.** `tests/test_m6_activity_history.py` (5 tests) and
+  acceptance tests 14–15 in `tests/test_acceptance.py` (SPEC
+  section 9, tests 12–13), plus a guard for the DEPLOY.md section
+  in `tests/test_deploy_config.py`. Each new test failed against
+  the M5 code and passes after. One test bug found while fixing
+  the migration test: `get_task` itself leaves an audit row, so
+  the "old rows" check filters by tool.
+- **Test-infrastructure fix (found while building M6).** The
+  live-server helpers started the server with
+  `stdout=subprocess.PIPE` and nobody read it. Uvicorn logs every
+  request, so the pipe filled up (64 KB) and blocked the server,
+  which timed out the client — the two new acceptance tests
+  failed with `httpx.ReadTimeout` in the full file but passed
+  alone. The server's log now goes to `server.log` in the test's
+  tmp dir (still read when the server exits early). Fixed in all
+  six live-server helpers; the suite runs in ~67 s instead of
+  ~91 s.
+
+Deviations from SPEC.md: none — this milestone *is* the spec
+change, made as the Owner's decision and recorded here and in
+SPEC.md.
+Open question for the Owner (not built): should superseded
+results (e.g. a rejected submission) also be kept? — **answered
+by this milestone for submissions**: yes, every submission is
+kept. The question now only covers anything else superseded
+(e.g. an overwritten review note is already kept as a review
+message since M5).
+
+## M5 (2026-11-11, complete — audited PASS, deployed on HermesVM)
 
 Permanent review history — the Owner's decision of 2026-11-11
 (correcting the M4 live-run fixes entry, which said the opposite).
