@@ -54,7 +54,7 @@ from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from .board import Board, RoundtableError
+from .board import Board, RoundtableError, SizeError
 from .config import Agent, Settings, load_agents_config
 from .db import connect
 
@@ -66,10 +66,13 @@ UNTRUSTED_WARNING = (
 # M6: at most 64 KB of a call's arguments per audit row. A larger
 # payload is stored cut, with a marker naming the original size.
 AUDIT_ARGS_MAX_BYTES = 65_536
+# M6 audit fix F1: a call rejected for size keeps only a short
+# prefix (2 KB) plus the marker, not 64 KB.
+AUDIT_ARGS_SIZE_REJECTED_MAX_BYTES = 2_048
 
 
-def _audit_arguments_json(arguments: dict) -> str:
-    """One call's arguments as JSON, at most 64 KB.
+def _audit_arguments_json(arguments: dict, max_bytes: int = AUDIT_ARGS_MAX_BYTES) -> str:
+    """One call's arguments as JSON, at most ``max_bytes``.
 
     A larger payload is stored cut, with a marker object carrying
     ``truncated: true`` and the original size in bytes. The cut is
@@ -80,7 +83,7 @@ def _audit_arguments_json(arguments: dict) -> str:
     never carry one."""
     raw = json.dumps(arguments, ensure_ascii=False, default=str)
     raw_bytes = raw.encode("utf-8")
-    if len(raw_bytes) <= AUDIT_ARGS_MAX_BYTES:
+    if len(raw_bytes) <= max_bytes:
         return raw
     prefix_len = len(raw)
     while True:
@@ -92,11 +95,21 @@ def _audit_arguments_json(arguments: dict) -> str:
             },
             ensure_ascii=False,
         )
-        if len(stored.encode("utf-8")) <= AUDIT_ARGS_MAX_BYTES or prefix_len <= 0:
+        if len(stored.encode("utf-8")) <= max_bytes or prefix_len <= 0:
             return stored
         prefix_len = max(
-            0, prefix_len - (len(stored.encode("utf-8")) - AUDIT_ARGS_MAX_BYTES) - 16
+            0, prefix_len - (len(stored.encode("utf-8")) - max_bytes) - 16
         )
+
+
+def _audit_omitted_json(arguments: dict, reason: str) -> str:
+    """A marker for a row whose arguments were not stored at all:
+    ``{"omitted": reason, "original_bytes": N}``. F1 stores this
+    for rate-limited calls; F2's marker is built in board.py."""
+    raw = json.dumps(arguments, ensure_ascii=False, default=str)
+    return json.dumps(
+        {"omitted": reason, "original_bytes": len(raw.encode("utf-8"))}
+    )
 
 # Hosts the MCP SDK always accepts (its loopback default, M3): the
 # ROUNDTABLE_ALLOWED_HOSTS setting adds to this list, never replaces it.
@@ -143,6 +156,13 @@ _current_agent: contextvars.ContextVar[Agent | None] = contextvars.ContextVar(
 )
 
 
+class RateLimitError(ToolError):
+    """A call refused by the rate limiter (a ToolError, so the MCP
+    layer handles it the same way). A distinct type so the audit
+    wrapper can tell it apart (M6 audit fix F1: a rate-limited call
+    stores no arguments, only a marker)."""
+
+
 class RateLimiter:
     """Per-agent sliding-window rate limiter (tool calls only)."""
 
@@ -160,7 +180,7 @@ class RateLimiter:
             while window and window[0] <= now - 60:
                 window.popleft()
             if len(window) >= self.per_minute:
-                raise ToolError(
+                raise RateLimitError(
                     f"rate limit exceeded: {self.per_minute} calls/minute "
                     f"for this token; try again later"
                 )
@@ -214,7 +234,11 @@ class BearerAuthMiddleware(BaseHTTPMiddleware):
 
 def create_app(settings: Settings, agents: list[Agent]) -> Starlette:
     """Build the Starlette app serving the MCP server at /mcp."""
-    board = Board(connect(settings.db_path), agents)
+    board = Board(
+        connect(settings.db_path),
+        agents,
+        history_max_bytes=int(settings.history_max_mb * 1024 * 1024),
+    )
     limiter = RateLimiter(settings.rate_limit_per_minute)
 
     mcp = MCPServer(
@@ -238,12 +262,16 @@ def create_app(settings: Settings, agents: list[Agent]) -> Starlette:
 
         M6: the audit row carries the call's arguments (JSON, at most
         64 KB) and, on a failed call, the error message — for every
-        tool call, success and error, reads included."""
+        tool call, success and error, reads included.
+        M6 audit fix F1: a rate-limited call stores no arguments
+        (only an ``omitted`` marker), and a call rejected for size
+        keeps only a 2 KB prefix."""
         agent = _current_agent.get()
         if agent is None:
             raise ToolError("unauthenticated: no valid bearer token")
         outcome = "success"
         error: str | None = None
+        audit_kind = "ok"
         audit_task_id = task_id
         result: Any = None
         try:
@@ -256,6 +284,11 @@ def create_app(settings: Settings, agents: list[Agent]) -> Starlette:
                 task = result.get("task")
                 if isinstance(task, dict) and isinstance(task.get("id"), int):
                     audit_task_id = task["id"]
+        except RateLimitError as exc:
+            outcome = "error"
+            error = str(exc)
+            audit_kind = "rate_limited"
+            raise
         except ToolError as exc:
             outcome = "error"
             error = str(exc)
@@ -263,19 +296,29 @@ def create_app(settings: Settings, agents: list[Agent]) -> Starlette:
         except RoundtableError as exc:
             outcome = "error"
             error = str(exc)
+            if isinstance(exc, SizeError):
+                audit_kind = "size"
             raise ToolError(str(exc)) from exc
         except Exception as exc:
             outcome = "error"
             error = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             raise
         finally:
+            if audit_kind == "rate_limited":
+                arguments_json = _audit_omitted_json(arguments or {}, "rate_limited")
+            elif audit_kind == "size":
+                arguments_json = _audit_arguments_json(
+                    arguments or {}, AUDIT_ARGS_SIZE_REJECTED_MAX_BYTES
+                )
+            else:
+                arguments_json = _audit_arguments_json(arguments or {})
             try:
                 board.log_audit(
                     agent.name,
                     tool_name,
                     audit_task_id,
                     outcome,
-                    _audit_arguments_json(arguments or {}),
+                    arguments_json,
                     error,
                 )
             except Exception:

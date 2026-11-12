@@ -273,3 +273,17 @@ def test_m6_updating_section():
     # R3: if the migration itself failed, restore the backup too.
     assert "Step 44" in updating
     assert "du -h" in updating or "ls -lh" in updating
+    # M6 audit fix F2: the history cap, the disk-space check, and
+    # what to do when the cap is reached.
+    assert "ROUNDTABLE_HISTORY_MAX_MB" in updating
+    assert "df -h /" in updating
+    assert "raise" in updating.lower()
+
+
+def test_m6_history_cap_in_env_example():
+    # F2: the cap ships in the EnvironmentFile template, with its
+    # default, so the deployed service has it from the first start.
+    env_example = (REPO / "deploy" / "roundtable.env.example").read_text(
+        encoding="utf-8"
+    )
+    assert "ROUNDTABLE_HISTORY_MAX_MB=1024" in env_example

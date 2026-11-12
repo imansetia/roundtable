@@ -37,6 +37,13 @@ Interpretations (documented in CHANGELOG.md, not silent scope changes):
   table, so no agent can forge a submission. The audit log gains
   the call's arguments (JSON, at most 64 KB) and, on error, the
   error message — written by the server wrapper, never by a tool.
+- M6 audit fixes (AUDIT-M6.md, 2026-11-12): the call log could
+  fill the VM disk, so (F1) rate-limited calls store no arguments
+  (only a marker) and size-rejected calls keep a 2 KB prefix, and
+  (F2) a configurable history cap
+  (``ROUNDTABLE_HISTORY_MAX_MB``, default 1024) omits arguments
+  above it and logs a warning once. Tools never fail because of
+  the cap.
 - The spec diagram mentions "leader reassigns" as a claimed -> open path,
   but section 6 defines no reassign tool, so M1 does not add one; a leader
   can cancel a claimed task and create a replacement instead. Settled by
@@ -46,11 +53,15 @@ Interpretations (documented in CHANGELOG.md, not silent scope changes):
 
 from __future__ import annotations
 
+import json
+import logging
 import threading
 from datetime import datetime, timezone
 
 from .config import Agent
 from .db import skills_from_json, skills_to_json
+
+logger = logging.getLogger("roundtable")
 
 TITLE_MAX = 200
 DESCRIPTION_MAX = 8_000
@@ -77,16 +88,34 @@ class RoundtableError(Exception):
     """An anticipated, reportable failure (role, state, size, not found)."""
 
 
+class SizeError(RoundtableError):
+    """A call rejected because an argument exceeds its size limit.
+
+    A distinct type so the server wrapper can tell a size rejection
+    apart from other failures (M6 audit fix F1: a size-rejected call
+    keeps only a short prefix of its arguments in the audit log)."""
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _check_size(field: str, value: str, limit: int) -> None:
     if len(value) > limit:
-        raise RoundtableError(
+        raise SizeError(
             f"{field} is {len(value)} chars, over the {limit}-char limit; "
             "rejected, not truncated"
         )
+
+
+def _is_omitted_marker(arguments_json: str) -> bool:
+    """True when the stored arguments are already an omission marker
+    (``{"omitted": ...}``) rather than real arguments."""
+    try:
+        stored = json.loads(arguments_json)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(stored, dict) and "omitted" in stored
 
 
 class Board:
@@ -97,10 +126,26 @@ class Board:
     atomic: exactly one of two simultaneous claims succeeds.
     """
 
-    def __init__(self, conn, agents: list[Agent]) -> None:
+    def __init__(
+        self,
+        conn,
+        agents: list[Agent],
+        history_max_bytes: int = 1024 * 1024 * 1024,
+    ) -> None:
         self._conn = conn
         self._lock = threading.RLock()
         self._agents = {a.name: a for a in agents}
+        # F2: the history cap bounds the audit log's stored
+        # arguments. The running total starts from what is already
+        # stored, so a database with existing history counts it.
+        # It is a soft limit on one server process: all writes go
+        # through this Board, and a small drift would only move the
+        # cap by bytes, never lose a row.
+        self._history_max_bytes = history_max_bytes
+        self._history_bytes = conn.execute(
+            "SELECT COALESCE(SUM(LENGTH(arguments)), 0) FROM audit_log"
+        ).fetchone()[0]
+        self._history_cap_warned = False
         with self._lock:
             for agent in agents:
                 conn.execute(
@@ -222,12 +267,39 @@ class Board:
         (at most 64 KB, cut with a marker — see server.py) and, on a
         failed call, the error message. The caller's identity comes
         from the token; no token or Authorization header is ever
-        stored here."""
+        stored here.
+        F2: above the history cap, the row keeps agent, tool, task,
+        outcome and error, but stores a marker instead of arguments,
+        and the server logs a warning once. Tools never fail because
+        of the cap. Rows that already carry an omission marker
+        (rate-limited) are tiny and keep their own reason."""
         with self._lock:
+            args = arguments_json
+            if args is not None and not _is_omitted_marker(args):
+                size = len(args.encode("utf-8"))
+                if self._history_bytes + size > self._history_max_bytes:
+                    args = json.dumps(
+                        {
+                            "omitted": "history_cap",
+                            "original_bytes": size,
+                        }
+                    )
+                    if not self._history_cap_warned:
+                        self._history_cap_warned = True
+                        logger.warning(
+                            "History cap reached "
+                            "(ROUNDTABLE_HISTORY_MAX_MB=%.3f MB): audit rows "
+                            "will omit arguments until the cap is raised or "
+                            "history is pruned; agent, tool, task, outcome "
+                            "and error are still recorded",
+                            self._history_max_bytes / (1024 * 1024),
+                        )
+                else:
+                    self._history_bytes += size
             self._conn.execute(
                 "INSERT INTO audit_log (time, agent, tool, task_id, outcome, "
                 "arguments, error) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (_now(), agent_name, tool, task_id, outcome, arguments_json, error),
+                (_now(), agent_name, tool, task_id, outcome, args, error),
             )
             self._conn.commit()
 

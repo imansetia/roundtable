@@ -100,7 +100,8 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 6. No secrets in logs. Tokens are compared in constant time.
 7. The server makes no outbound network requests.
 8. A worker cannot read tokens, change roles, edit another agent's messages, or modify the audit log. No tool reads the audit log, and no tool updates or deletes history rows (submissions, review messages, audit rows) — history is append-only and is read on the VM only.
-9. Call history: every tool call leaves one audit row with the call's arguments as JSON and, on error, the error message. The caller's identity stays from the token; no token or Authorization header is ever stored. At most 64 KB of arguments per row; a larger payload is stored cut, with a marker naming the original size in bytes. That truncation applies only to this log; board data is still rejected, not truncated.
+9. Call history: every tool call leaves one audit row with the call's arguments as JSON and, on error, the error message. The caller's identity stays from the token; no token or Authorization header is ever stored. At most 64 KB of arguments per row; a larger payload is stored cut, with a marker naming the original size in bytes. That truncation applies only to this log; board data is still rejected, not truncated. Arguments are logged from each tool's declared parameters; extra arguments an agent sends that the SDK drops (e.g. `decision` on `post_message`) are not recorded (N2). F1: a rate-limited call stores no arguments, only a marker `{"omitted": "rate_limited", "original_bytes": N}`; a call rejected for size keeps a short prefix (2 KB) plus the marker. F2: a configurable history cap, `ROUNDTABLE_HISTORY_MAX_MB` (default 1024), bounds the audit log's stored arguments; above it, rows keep agent, tool, task, outcome and error but store a marker `{"omitted": "history_cap"}` instead of arguments, and the server logs a warning once. Tools never fail because of the cap.
+10. Calls the MCP SDK rejects before the audit wrapper — missing or wrong-typed arguments — leave no audit row. The audit log covers only calls that reach the wrapper. (N1: a pre-existing gap since M1; covering them needs an SDK-level hook.)
 
 ## 8. Worker script (for API-only models)
 
@@ -127,6 +128,8 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 11. (M5) Reject then approve gives two review messages in order, with the right decisions and authors; the audit log has exactly one `review_task` row per call.
 12. (M6) Two submissions on one task are both kept, in order, and `tasks.result` is the latest.
 13. (M6) A failed call leaves an audit row with its arguments and the error message; no audit row contains a token; a 100 KB argument is stored cut with the marker.
+14. (M6 audit fixes) A rate-limited call leaves an audit row with no arguments, only an `omitted: rate_limited` marker; a size-rejected call keeps at most a 2 KB prefix.
+15. (M6 audit fixes) Above `ROUNDTABLE_HISTORY_MAX_MB`, audit rows keep agent, tool, task, outcome and error but store an `omitted: history_cap` marker instead of arguments; the tool call still succeeds; the server logs a warning once.
 
 ## 10. Milestones
 

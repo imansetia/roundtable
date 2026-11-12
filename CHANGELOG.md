@@ -2,6 +2,70 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M6 audit fixes (2026-11-12, in progress — code written, not yet re-audited)
+
+AUDIT-M6.md: PASS WITH REQUIRED FIXES. R1–R4 are fixed and the
+history itself is confirmed good (113 tests from a bundle clone;
+submissions kept in order; failed calls logged with arguments and
+error; neither token found in the raw database bytes; an M5
+database migrates cleanly). But a live flood probe showed the call
+log can fill the VM disk, which Hermes shares: rate-limited and
+oversized calls still stored up to 64 KB of arguments each (about
+50 GB/day possible). F1–F2 fix that; N1–N2 are stated, not built.
+
+- **F1 (flood: rejected calls stored the maximum payload).** A
+  call refused by the rate limiter now stores no arguments at
+  all, only a marker `{"omitted": "rate_limited",
+  "original_bytes": N}`. A call rejected for size keeps a short
+  prefix (2 KB) plus the marker, not 64 KB. Successful calls keep
+  their full arguments (≤ 64 KB) as before. Implemented with two
+  distinct error types so the wrapper can tell them apart: the
+  rate limiter raises `RateLimitError` (a `ToolError`) and the
+  size check raises `SizeError` (a `RoundtableError`). The
+  rate-limit check runs before the tool, so a call that is both
+  rate-limited and oversized gets the rate-limited marker.
+- **F2 (no ceiling on history growth).** New setting
+  `ROUNDTABLE_HISTORY_MAX_MB` (default 1024), read at startup
+  from the EnvironmentFile (see `deploy/roundtable.env.example`
+  and DEPLOY.md "Updating to M6"). Above the cap, audit rows keep
+  agent, tool, task, outcome and error but store a marker
+  `{"omitted": "history_cap", "original_bytes": N}` instead of
+  arguments, and the server logs a warning once per process
+  ("History cap reached"). Tools never fail because of the cap.
+  The running total counts stored argument bytes, starting from
+  what is already in the database, so existing history counts;
+  omission markers themselves do not count (they are tiny). The
+  cap covers the audit log's arguments only — submissions still
+  grow (each up to 20 KB), which the deploy guide says. DEPLOY.md
+  documents the setting, the disk-space check (`df -h /` next to
+  `du -h` of the database), and what to do when the cap is
+  reached (raise the cap and restart, or free disk; no hand
+  pruning — append-only by design).
+- **N1 (not built).** Calls the MCP SDK rejects before the audit
+  wrapper (missing or wrong-typed arguments) still leave no audit
+  row — a pre-existing gap since M1. Stated as a limit in SPEC.md
+  section 7, item 10; covering them needs an SDK-level hook.
+- **N2 (stated).** Arguments are logged from each tool's own
+  parameter list, so extra arguments an agent sends that the SDK
+  drops (e.g. `decision` on `post_message`) are not recorded.
+  Stated in SPEC.md section 7, item 9 and recorded here.
+- **SPEC.md.** Section 7, item 9 extended (F1, F2, N2), new item
+  10 (N1), section 9 gains acceptance tests 14–15.
+- **Tests.** `test_m6_f1_rate_limited_call_stores_no_arguments`
+  and `test_m6_f2_history_cap_omits_arguments_and_warns_once`
+  (both new), and the 100 KB test now asserts the 2 KB prefix for
+  a size-rejected call. Each failed against the M6 code and passes
+  after. One test bug found while fixing F2: the second call in
+  the cap test used `list_tasks` (tiny arguments, under the cap),
+  so only the first call carried the marker; it now makes a
+  second large `create_task`.
+
+Deviations from SPEC.md: none — these are the spec changes for
+the audit fixes, recorded here and in SPEC.md.
+Open question for the Owner (not built): should superseded
+results (e.g. a rejected submission) also be kept? — answered by
+M6 for submissions: yes, every submission is kept.
+
 ## M6 (2026-11-12, in progress — code written, not yet audited)
 
 Complete activity history — the Owner's decision of 2026-11-12

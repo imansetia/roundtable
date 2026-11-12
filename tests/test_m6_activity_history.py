@@ -44,7 +44,13 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def start_server(tmp: Path, port: int, agents: dict = AGENTS, rate_limit: int = 60):
+def start_server(
+    tmp: Path,
+    port: int,
+    agents: dict = AGENTS,
+    rate_limit: int = 60,
+    extra_env: dict | None = None,
+):
     config = tmp / "agents.json"
     config.write_text(json.dumps(agents), encoding="utf-8")
     db_path = tmp / "roundtable.db"
@@ -59,6 +65,8 @@ def start_server(tmp: Path, port: int, agents: dict = AGENTS, rate_limit: int = 
             "ROUNDTABLE_RATE_LIMIT_PER_MINUTE": str(rate_limit),
         }
     )
+    if extra_env:
+        env.update(extra_env)
     # The server's log goes to a file, not a PIPE: uvicorn logs
     # every request, and an unread PIPE fills up (64 KB) and
     # blocks the server, which then times out the client. The log
@@ -221,9 +229,10 @@ def test_m6_large_argument_stored_cut_with_marker(server):
     db = server["db"]
     task = make_task(url, "M6 large argument")
     # A 100 KB body is rejected (message limit 4,000) — but the call
-    # still leaves an audit row, with the arguments cut to 64 KB and
-    # a marker naming the original size. The board data itself is
-    # rejected, not truncated: nothing was stored on the task.
+    # still leaves an audit row. F1: a call rejected for size keeps
+    # only a short prefix (2 KB) plus the marker, not 64 KB. The
+    # board data itself is rejected, not truncated: nothing was
+    # stored on the task.
     big = "x" * 100_000
     err, _ = call(
         url, CODER, "post_message",
@@ -238,7 +247,8 @@ def test_m6_large_argument_stored_cut_with_marker(server):
     )
     assert len(rows) == 1
     stored = json.loads(rows[0]["arguments"])
-    # The marker: truncated, with the original size in bytes.
+    # The marker: truncated, with the original size in bytes, and a
+    # short prefix (F1: at most 2 KB for a size-rejected call).
     assert stored["truncated"] is True
     expected_bytes = len(
         json.dumps(
@@ -247,7 +257,7 @@ def test_m6_large_argument_stored_cut_with_marker(server):
     )
     assert stored["original_bytes"] == expected_bytes
     assert stored["original_bytes"] > 64 * 1024
-    assert len(stored["arguments"].encode("utf-8")) <= 64 * 1024
+    assert len(stored["arguments"].encode("utf-8")) <= 2 * 1024
     assert "4000" in (rows[0]["error"] or "")
     err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
     assert not err and data["task"]["messages"] == []
@@ -284,6 +294,113 @@ def test_m6_audit_log_one_row_per_call(server):
     assert rows[0]["outcome"] == "success"
     assert rows[1]["outcome"] == "error"
     assert "only the leader" in rows[1]["error"]
+
+
+# -- M6 audit fixes: F1 (flood) -------------------------------------------
+
+def test_m6_f1_rate_limited_call_stores_no_arguments(tmp_path):
+    """F1: a rate-limited call must not store its arguments at all —
+    only a marker naming the original size. Otherwise one token can
+    write ~35 MB/min of audit arguments (the audit's flood probe:
+    27 rate-limited rows alone stored 1.77 MB)."""
+    tmp = tmp_path
+    port = free_port()
+    proc, url, db_path = start_server(tmp, port, AGENTS, rate_limit=3)
+    try:
+        # Four create_task calls with a large (8,000-char, valid)
+        # description: the first three succeed, the fourth is
+        # rate-limited.
+        big_description = "y" * 8_000
+        for i in range(3):
+            err, _ = call(
+                url, LEADER, "create_task",
+                {"title": f"F1 task {i}", "description": big_description},
+            )
+            assert not err
+        err, _ = call(
+            url, LEADER, "create_task",
+            {"title": "F1 task 3", "description": big_description},
+        )
+        assert err
+        rows = db_rows(
+            db_path,
+            "SELECT tool, outcome, arguments, error FROM audit_log "
+            "WHERE tool = 'create_task' ORDER BY id",
+        )
+        assert len(rows) == 4
+        # The three successful calls keep their full arguments.
+        for row in rows[:3]:
+            assert json.loads(row["arguments"])["title"].startswith("F1 task")
+        # The rate-limited call stores no arguments, only the marker.
+        limited = rows[3]
+        assert limited["outcome"] == "error"
+        assert "rate limit" in (limited["error"] or "")
+        stored = json.loads(limited["arguments"])
+        assert stored["omitted"] == "rate_limited"
+        expected_bytes = len(
+            json.dumps(
+                {
+                    "title": "F1 task 3",
+                    "description": big_description,
+                    "required_skill": None,
+                    "assignee": None,
+                }
+            ).encode("utf-8")
+        )
+        assert stored["original_bytes"] == expected_bytes
+        assert stored["original_bytes"] > 8_000
+        assert len(limited["arguments"].encode("utf-8")) < 200
+    finally:
+        stop_server(proc)
+
+
+def test_m6_f2_history_cap_omits_arguments_and_warns_once(tmp_path):
+    """F2: above ROUNDTABLE_HISTORY_MAX_MB, audit rows keep agent,
+    tool, task, outcome and error, but store a marker instead of
+    arguments — and the server logs a warning once. Tools never
+    fail because of the cap."""
+    tmp = tmp_path
+    port = free_port()
+    # A ~1 KB cap: one call with a 2,000-char description crosses it.
+    proc, url, db_path = start_server(
+        tmp, port, AGENTS, extra_env={"ROUNDTABLE_HISTORY_MAX_MB": "0.001"}
+    )
+    try:
+        err, data = call(
+            url, LEADER, "create_task",
+            {"title": "F2 task", "description": "z" * 2_000},
+        )
+        assert not err, data
+        task_id = data["task"]["id"]
+        # A second successful call, also over the cap (a small call
+        # would fit under it: the first call's marker does not count
+        # toward the total, so the running total is still 0).
+        err, _ = call(
+            url, LEADER, "create_task",
+            {"title": "F2 task 2", "description": "z" * 2_000},
+        )
+        assert not err
+        rows = db_rows(
+            db_path,
+            "SELECT agent, tool, task_id, outcome, arguments, error "
+            "FROM audit_log ORDER BY id",
+        )
+        assert len(rows) == 2
+        for row in rows:
+            stored = json.loads(row["arguments"])
+            assert stored["omitted"] == "history_cap"
+            assert stored["original_bytes"] > 1_000
+        assert rows[0]["agent"] == "planner"
+        assert rows[0]["tool"] == "create_task"
+        assert rows[0]["task_id"] == task_id
+        assert rows[0]["outcome"] == "success"
+        assert rows[0]["error"] is None
+        # The warning is logged exactly once, even though two calls
+        # crossed the cap.
+        log = (tmp / "server.log").read_text(errors="replace")
+        assert log.count("History cap reached") == 1
+    finally:
+        stop_server(proc)
 
 
 # -- M6: migration of an M5 database ---------------------------------------

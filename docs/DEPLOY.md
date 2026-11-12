@@ -1409,6 +1409,31 @@ sudo -u roundtable sqlite3 -readonly /srv/roundtable/data/roundtable.db "SELECT 
 There is no pruning yet — that is a decision for the Owner, not
 something this update does on its own.
 
+**History cap (M6 audit fix F2).** The audit log's stored
+arguments are capped by `ROUNDTABLE_HISTORY_MAX_MB` (default
+1024 MB), set in `/srv/roundtable/roundtable.env` (Step 20) and
+read at startup. Above the cap, audit rows keep agent, tool,
+task, outcome and error but store a marker instead of arguments,
+and the server logs a warning once — tools never fail because of
+the cap. F1 closes the flood vector the audit found: a
+rate-limited call stores no arguments at all (only a marker),
+and a size-rejected call keeps a 2 KB prefix, not 64 KB. Check
+the disk the database lives on next to the database itself:
+
+```bash
+df -h /
+sudo -u roundtable du -h /srv/roundtable/data/roundtable.db
+```
+
+**What to do when the cap is reached.** The board keeps working
+and every call is still logged — only the arguments are omitted.
+To restore full argument logging, raise
+`ROUNDTABLE_HISTORY_MAX_MB` in `/srv/roundtable/roundtable.env`
+and restart Roundtable (`sudo systemctl restart roundtable`),
+or free disk first if the disk itself is full. Do not delete
+history rows by hand: the log is append-only by design, and
+pruning old history is a decision for the Owner.
+
 **Undo:** Step 47 (and Step 44 if the migration failed).
 
 ### Step 48 — Full uninstall (removes only Roundtable's things)

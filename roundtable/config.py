@@ -43,11 +43,23 @@ class Settings:
     db_path: str = "roundtable.db"
     agents_config: str = "agents.json"
     rate_limit_per_minute: int = 60
+    # Cap on the audit log's stored arguments, in megabytes
+    # (ROUNDTABLE_HISTORY_MAX_MB, default 1024). Above it, audit rows
+    # keep agent, tool, task, outcome and error but store a marker
+    # instead of arguments (M6 audit fix F2). Fractions are allowed
+    # (e.g. 0.001 for a test). 0 means no arguments are ever stored.
+    history_max_mb: float = 1024.0
     # Extra Host values the MCP server accepts, from
     # ROUNDTABLE_ALLOWED_HOSTS (comma-separated). None means "use the
     # SDK default": loopback only. Set it when the server sits behind a
     # reverse proxy so the public DNS name is accepted (M3).
     allowed_hosts: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.history_max_mb < 0:
+            raise ValueError(
+                "ROUNDTABLE_HISTORY_MAX_MB must be >= 0"
+            )
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -60,6 +72,9 @@ class Settings:
             ),
             rate_limit_per_minute=int(
                 os.environ.get("ROUNDTABLE_RATE_LIMIT_PER_MINUTE", "60")
+            ),
+            history_max_mb=float(
+                os.environ.get("ROUNDTABLE_HISTORY_MAX_MB", "1024")
             ),
             allowed_hosts=_parse_allowed_hosts(
                 os.environ.get("ROUNDTABLE_ALLOWED_HOSTS")
