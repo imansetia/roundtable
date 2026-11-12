@@ -2,7 +2,42 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
-## M6 audit fixes (2026-11-12, in progress — code written, not yet re-audited)
+## M6 notes (N3–N6) (2026-11-13)
+
+M6 is deployed on HermesVM (90d215a; AUDIT-M6-FIXES.md PASS) and
+both apps are reconnected. Small follow-ups on branch
+`chore/m6-notes`, reviewed by the Auditor as a pull request into
+`main` (main is now protected: changes land only through a PR the
+Owner merges after the Auditor's review). No server behaviour
+change except N5.
+
+- **N3 (history rows are uncapped — only arguments are).**
+  DEPLOY.md "Updating to M6" gains a weekly **Disk check**:
+  `df -h /` plus `du -ch` of the database files, with
+  thresholds — below 10 GB free, investigate what is growing;
+  below 5 GB, act now. Hermes shares the disk. Never delete
+  history rows by hand; pruning is the Owner's decision.
+- **N4 (slow-container timeout).** `test_never_prints_or_logs_
+  the_api_key` waited only 10 s for the fake model call and timed
+  out once in a slow container; the wait is now 30 s, matching the
+  30 s timeout the suite already uses elsewhere. The leak
+  assertions are unchanged.
+- **N5 (history cap counted characters at start-up, bytes at
+  runtime).** `Board` now starts its running total from
+  `SUM(LENGTH(CAST(arguments AS BLOB)))`, so stored arguments
+  count in bytes, as the runtime total does. New test
+  `test_m6_n5_history_cap_counts_bytes_at_startup` seeds a row of
+  500 'é' (~580 characters, ~1,080 bytes) and sets the cap
+  between the two counts; it failed before the fix and passes
+  after. SPEC.md needs no change: it already describes the cap
+  in bytes.
+- **N6 (`du -h` missed the WAL).** Every size check in the guide
+  now uses `sudo -u roundtable du -ch
+  /srv/roundtable/data/roundtable.db*`, totalling `.db`, `-wal`
+  and `-shm`: plain `du -h roundtable.db` showed 4.0K on the VM
+  because most data sits in `-wal` while the server runs.
+
+## M6 audit fixes (2026-11-12, complete — re-audit PASS, deployed on HermesVM)
 
 AUDIT-M6.md: PASS WITH REQUIRED FIXES. R1–R4 are fixed and the
 history itself is confirmed good (113 tests from a bundle clone;
@@ -38,7 +73,7 @@ oversized calls still stored up to 64 KB of arguments each (about
   cap covers the audit log's arguments only — submissions still
   grow (each up to 20 KB), which the deploy guide says. DEPLOY.md
   documents the setting, the disk-space check (`df -h /` next to
-  `du -h` of the database), and what to do when the cap is
+  `du -ch` of the database files), and what to do when the cap is
   reached (raise the cap and restart, or free disk; no hand
   pruning — append-only by design).
 - **N1 (not built).** Calls the MCP SDK rejects before the audit
@@ -66,7 +101,7 @@ Open question for the Owner (not built): should superseded
 results (e.g. a rejected submission) also be kept? — answered by
 M6 for submissions: yes, every submission is kept.
 
-## M6 (2026-11-12, in progress — code written, not yet audited)
+## M6 (2026-11-12, complete — audited PASS, deployed on HermesVM)
 
 Complete activity history — the Owner's decision of 2026-11-12
 ("keep the full history of everything any agent does"). The board
@@ -119,7 +154,8 @@ so a rejected submission and the exact call that failed were lost.
   Roundtable only, reconnect both apps, restore the backup
   (Step 44) as well as rolling back (Step 47) if the migration
   itself failed, and the expected database growth with how to
-  check its size (`du -h` and the row counts).
+  check its size (`du -ch` of the database files, and the row
+  counts).
 - **Tests.** `tests/test_m6_activity_history.py` (5 tests) and
   acceptance tests 14–15 in `tests/test_acceptance.py` (SPEC
   section 9, tests 12–13), plus a guard for the DEPLOY.md section
