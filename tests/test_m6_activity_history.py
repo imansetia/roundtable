@@ -343,6 +343,7 @@ def test_m6_f1_rate_limited_call_stores_no_arguments(tmp_path):
                     "title": "F1 task 3",
                     "description": big_description,
                     "required_skill": None,
+                    "required_skills": None,
                     "assignee": None,
                 }
             ).encode("utf-8")

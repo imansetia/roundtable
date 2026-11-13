@@ -35,7 +35,11 @@ Agents never call each other directly. They only read and write the board.
 
 **agents**: name, role (`leader` | `worker`), skills (short free text set by the Owner), last_seen.
 
-**tasks**: id, title, description, required_skill (optional), status, created_by, assignee, result, review_note, created_at, updated_at.
+**tasks**: id, title, description, required_skills (a list; each at
+most 100 chars, at most 10), status, created_by, assignee, result,
+review_note, created_at, updated_at. The legacy single-skill view
+`required_skill` (the first required skill, or null) is returned
+alongside the list so existing clients still work.
 
 **messages**: id, task_id, author, kind (`progress` | `help_request` | `reply` | `note` | `review`), body, decision (`approved` | `rejected`, only on review messages; null otherwise), created_at.
 
@@ -61,6 +65,18 @@ current meaning (the latest note). Review messages are untrusted
 content like every other message. Existing tasks get no back-filled
 history.
 
+M7 (Owner decision, 2026-11-13): skills are enforced on the
+server. `claim_task` is rejected unless the worker holds every
+required skill. Skills come only from agents.json (set by the
+Owner), never from the agent. A task with no required skills can
+be claimed by any worker, as before. `create_task` warns the
+leader (not an error) when no active worker has all the required
+skills, and rejects a direct assignee who lacks a skill.
+`list_tasks` gains a `claimable_by_me` filter for workers.
+Existing tasks migrate from the single `required_skill` to the
+list: a set skill becomes a one-item list, an unset one becomes
+[].
+
 ### Task states
 
 ```
@@ -78,10 +94,10 @@ any non-final state -> cancelled     (leader only)
 |---|---|---|
 | `whoami` | all | Returns the caller's name, role, skills. |
 | `list_agents` | all | Names, roles, skills, last_seen. |
-| `create_task` | leader | Creates an `open` task. Optional `assignee` to assign directly. |
-| `list_tasks` | all | Filter by status / assignee. Paginated. |
+| `create_task` | leader | Creates an `open` task. Optional `assignee` to assign directly (rejected if the assignee lacks a required skill). `required_skills` is a list (each at most 100 chars, at most 10); the old `required_skill` still works and means a one-item list. Warns in the result when no active worker has all the required skills. |
+| `list_tasks` | all | Filter by status / assignee. `claimable_by_me=true` (workers only) lists only open tasks the caller may claim. Paginated. |
 | `get_task` | all | One task with its messages and submissions. |
-| `claim_task` | worker | `open` -> `claimed`. Must be atomic: if two agents claim at once, exactly one succeeds. |
+| `claim_task` | worker | `open` -> `claimed`. Must be atomic: if two agents claim at once, exactly one succeeds. The worker must hold every required skill. |
 | `release_task` | assignee | `claimed` -> `open`. |
 | `post_message` | all | Adds a progress note, help request, or reply to a task. kind `review` is reserved for the server and is rejected. |
 | `submit_result` | assignee | `claimed` -> `submitted`, stores the result. Also stores a submission (every submission is kept, in order). |
@@ -130,6 +146,13 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 13. (M6) A failed call leaves an audit row with its arguments and the error message; no audit row contains a token; a 100 KB argument is stored cut with the marker.
 14. (M6 audit fixes) A rate-limited call leaves an audit row with no arguments, only an `omitted: rate_limited` marker; a size-rejected call keeps at most a 2 KB prefix.
 15. (M6 audit fixes) Above `ROUNDTABLE_HISTORY_MAX_MB`, audit rows keep agent, tool, task, outcome and error but store an `omitted: history_cap` marker instead of arguments; the tool call still succeeds; the server logs a warning once.
+16. (M7) A worker without a required skill cannot claim: the claim is rejected with a clear error naming the missing skill, and the task stays open.
+17. (M7) A worker holding every required skill can claim.
+18. (M7) A multi-skill task is rejected for a worker holding only some of the required skills.
+19. (M7) `create_task` warns (not an error) when no active worker has all the required skills; a direct assignee who lacks a skill is rejected.
+20. (M7) The old `required_skill` argument still works: it means a one-item list, and task output carries both forms.
+21. (M7) Migration of an M6 database keeps all tasks: a set `required_skill` becomes a one-item list, an unset one becomes [].
+22. (M7) `worker.py` claims only what the server allows (`claimable_by_me`), including a multi-skill task it only partly matches.
 
 ## 10. Milestones
 
@@ -139,6 +162,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M4** — Connect two real agent apps as custom MCP connectors; record one end-to-end demo task.
 - **M5** — Permanent review history: every review stores a review message (Owner decision, 2026-11-11). -> Auditor review.
 - **M6** — Complete activity history: every submission is kept, and every tool call is logged with its arguments (Owner decision, 2026-11-12). -> Auditor review.
+- **M7** — Skills are enforced on the server (Owner decision, 2026-11-13). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.
 

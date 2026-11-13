@@ -2,8 +2,9 @@
 
 A small loop for models that have an API but no agent app (e.g. DeepSeek,
 any OpenAI-compatible endpoint). It connects to Roundtable as an MCP
-client with its own bearer token, polls for open tasks matching its skill,
-claims one, sends it to the model, and submits the answer as the result.
+client with its own bearer token, polls for open tasks it may claim
+(the server decides, via ``claimable_by_me``), claims one, sends it to
+the model, and submits the answer as the result.
 
 Config is by environment variables only (see ``.env.example``); there is
 no config file and no real API key is needed to run the test suite — the
@@ -327,21 +328,6 @@ class RoundtableWorker:
             raise WorkerError(f"unexpected reply from {name}")
         return payload
 
-    def _matches(self, task: dict) -> bool:
-        """Does this task match our skill and (if assigned) our name?
-
-        A task with no required_skill has no skill requirement, so any
-        worker matches it. A task pre-assigned to someone else never
-        matches (the server would reject the claim anyway).
-        """
-        required = task.get("required_skill")
-        if required is not None and required not in self.skills:
-            return False
-        assignee = task.get("assignee")
-        if assignee is not None and assignee != self.name:
-            return False
-        return True
-
     def _under_cap(self) -> bool:
         """True if fewer than max_tasks_per_hour model calls were made in
         the last hour (rolling window, counted on every call attempt —
@@ -468,17 +454,25 @@ class RoundtableWorker:
                 self.config.max_tasks_per_hour,
             )
             return "capped"
-        # AUDIT-M2 W3: page through all open tasks (limit 100 per page)
-        # instead of only the first 50, or a matching task behind many
-        # non-matching ones would starve forever.
+        # M7: the server decides what this worker may claim
+        # (claimable_by_me: open, not assigned to someone else, every
+        # required skill held), so the worker no longer filters by
+        # skill itself. Page through the claimable tasks (limit 100
+        # per page) instead of only the first 50.
         offset = 0
         while True:
             data = await self._call_tool(
-                "list_tasks", {"status": "open", "limit": 100, "offset": offset}
+                "list_tasks",
+                {
+                    "status": "open",
+                    "claimable_by_me": True,
+                    "limit": 100,
+                    "offset": offset,
+                },
             )
             tasks = data.get("tasks", [])
             for task in tasks:
-                if not self._matches(task) or self._skip_task(task["id"]):
+                if self._skip_task(task["id"]):
                     continue
                 try:
                     claimed = await self._call_tool(

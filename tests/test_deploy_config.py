@@ -295,6 +295,29 @@ def test_m6_updating_section():
     assert "5 GB" in updating
 
 
+def test_m7_updating_section():
+    # M7 (AUDIT-M7 R1): the "Updating to M7" section backs up
+    # first, updates with Step 46 to the audited commit, restarts
+    # Roundtable only, and reconnects both apps afterwards — and
+    # states plainly that a rollback (Step 47) needs the backup
+    # restore (Step 44) too, because M6 code cannot run on a
+    # migrated database (the rebuilt tasks table has no
+    # required_skill column).
+    updating = section("Updating to M7")
+    assert "Step 43" in updating  # back up first
+    assert "Step 46" in updating
+    assert "AUDITED_COMMIT" in updating
+    assert "restart roundtable" in " ".join(updating.split()).lower()
+    assert "Reconnect" in updating
+    assert "scripts/copy-worker-token.sh" in updating
+    assert "Step 44" in updating
+    assert "Step 47" in updating
+    # R1: the rollback trap — M6 code cannot run on a migrated
+    # database, so Step 47 alone leaves the board broken.
+    assert "cannot run" in updating
+    assert "required_skill" in updating
+
+
 def test_m6_history_cap_in_env_example():
     # F2: the cap ships in the EnvironmentFile template, with its
     # default, so the deployed service has it from the first start.

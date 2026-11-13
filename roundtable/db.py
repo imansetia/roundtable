@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    required_skill TEXT,
+    required_skills TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'open'
         CHECK (status IN ('open', 'claimed', 'submitted', 'done', 'cancelled')),
     created_by TEXT NOT NULL,
@@ -87,6 +87,7 @@ def connect(db_path: str) -> sqlite3.Connection:
         conn.commit()
     _migrate_messages_table(conn)
     _migrate_audit_log(conn)
+    _migrate_tasks_table(conn)
     return conn
 
 
@@ -172,6 +173,81 @@ def _migrate_messages_table(conn: sqlite3.Connection) -> None:
             "CHECK (decision IN ('approved', 'rejected'))"
         )
         conn.commit()
+
+
+def _migrate_tasks_table(conn: sqlite3.Connection) -> None:
+    """M7: tasks gain `required_skills` (a JSON list) instead of the
+    single `required_skill` (Owner decision, 2026-11-13: skills are
+    enforced on the server). A task may require several skills; the
+    old column held at most one. SQLite cannot change a column in
+    place, so an old table is rebuilt (same crash-safe pattern as
+    the M5 messages migration): DROP TABLE IF EXISTS tasks_new
+    first, then the whole rebuild in one explicit transaction.
+    Existing tasks keep their ids, status, assignee, result and
+    review_note; a set required_skill becomes a one-item list, an
+    unset one becomes []. The messages and submissions tables
+    reference tasks, so foreign-key enforcement is switched off
+    for the rebuild (outside the transaction — the pragma is a
+    no-op inside one) and back on afterwards; the ids are copied
+    unchanged, so the references stay valid. A failed migration
+    raises here and blocks startup loudly — the Owner restores
+    the backup (DEPLOY.md Step 44)."""
+    columns = [r[1] for r in conn.execute("PRAGMA table_info(tasks)")]
+    if "required_skill" not in columns:
+        return  # fresh database, or already migrated
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DROP TABLE IF EXISTS tasks_new")
+        conn.execute(
+            "CREATE TABLE tasks_new ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT NOT NULL, "
+            "description TEXT NOT NULL DEFAULT '', "
+            "required_skills TEXT NOT NULL DEFAULT '[]', "
+            "status TEXT NOT NULL DEFAULT 'open' "
+            "CHECK (status IN ('open', 'claimed', 'submitted', 'done', 'cancelled')), "
+            "created_by TEXT NOT NULL, "
+            "assignee TEXT, "
+            "result TEXT, "
+            "review_note TEXT, "
+            "created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO tasks_new "
+            "(id, title, description, required_skills, status, created_by, "
+            "assignee, result, review_note, created_at, updated_at) "
+            "SELECT id, title, description, "
+            "CASE WHEN required_skill IS NULL OR required_skill = '' "
+            "THEN '[]' ELSE json_array(required_skill) END, "
+            "status, created_by, assignee, result, review_note, "
+            "created_at, updated_at FROM tasks"
+        )
+        conn.execute("DROP TABLE tasks")
+        conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
+        # DROP TABLE also dropped the tasks indexes (SCHEMA already
+        # ran, so they are not recreated after this point).
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee)"
+        )
+        # DROP + RENAME do not reliably carry the AUTOINCREMENT
+        # sequence, so pin it to the largest id copied over.
+        # (sqlite_sequence has no PRIMARY KEY, so no ON CONFLICT.)
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'tasks'")
+        conn.execute(
+            "INSERT INTO sqlite_sequence (name, seq) VALUES ('tasks', "
+            "(SELECT COALESCE(MAX(id), 0) FROM tasks))"
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def skills_to_json(skills: list[str]) -> str:

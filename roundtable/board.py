@@ -44,6 +44,18 @@ Interpretations (documented in CHANGELOG.md, not silent scope changes):
   (``ROUNDTABLE_HISTORY_MAX_MB``, default 1024) omits arguments
   above it and logs a warning once. Tools never fail because of
   the cap.
+- M7 (Owner decision, 2026-11-13): skills are enforced on the
+  server. A task may require several skills (``required_skills``,
+  a list); the old single ``required_skill`` argument still works
+  and means a one-item list, and task output carries both forms
+  so existing clients still work. ``claim_task`` is rejected
+  unless the worker has every required skill; skills come only
+  from agents.json (set by the Owner), never from the agent. A
+  task with no required skills can be claimed by any worker, as
+  before. ``create_task`` warns (not an error) when no active
+  worker has all the required skills, and rejects a direct
+  assignee who lacks a skill. ``list_tasks`` gains a
+  ``claimable_by_me`` filter for workers.
 - The spec diagram mentions "leader reassigns" as a claimed -> open path,
   but section 6 defines no reassign tool, so M1 does not add one; a leader
   can cancel a claimed task and create a replacement instead. Settled by
@@ -68,7 +80,8 @@ DESCRIPTION_MAX = 8_000
 MESSAGE_MAX = 4_000
 RESULT_MAX = 20_000
 REVIEW_NOTE_MAX = 4_000  # see module docstring (deviation, in CHANGELOG.md)
-REQUIRED_SKILL_MAX = 100  # AUDIT R4: was uncapped
+REQUIRED_SKILL_MAX = 100  # AUDIT R4: was uncapped (per skill, M7)
+REQUIRED_SKILLS_MAX = 10  # M7: at most 10 required skills per task
 ASSIGNEE_FILTER_MAX = 100  # AUDIT R4: assignee filter in list_tasks
 LIST_LIMIT_DEFAULT = 50
 LIST_LIMIT_MAX = 100
@@ -194,11 +207,17 @@ class Board:
 
     @staticmethod
     def _task_dict(row) -> dict:
+        # M7: the task carries both forms of the requirement.
+        # required_skills is the list; required_skill is the legacy
+        # single-skill view (the first skill, or None) so existing
+        # clients still work.
+        skills = skills_from_json(row["required_skills"])
         return {
             "id": row["id"],
             "title": row["title"],
             "description": row["description"],
-            "required_skill": row["required_skill"],
+            "required_skills": skills,
+            "required_skill": skills[0] if skills else None,
             "status": row["status"],
             "created_by": row["created_by"],
             "assignee": row["assignee"],
@@ -255,6 +274,63 @@ class Board:
                 f"only a worker can do this (caller {agent.name!r} "
                 f"is a {agent.role})"
             )
+
+    # -- skills (M7) -------------------------------------------------------
+    @staticmethod
+    def _normalize_required_skills(
+        required_skill: str | None, required_skills: list[str] | None
+    ) -> list[str]:
+        """Resolve the two spellings of a task's requirement (M7).
+
+        The old ``required_skill`` means a one-item list; the new
+        ``required_skills`` is the list itself. Giving both is an
+        error (they would disagree about the source of truth).
+        Each skill is at most 100 chars, at most 10 skills;
+        duplicates are dropped, and an empty skill means no skill
+        (as the old single argument treated "" as unset).
+        """
+        if required_skill is not None and required_skills is not None:
+            raise RoundtableError(
+                "provide only one of 'required_skill' or 'required_skills'"
+            )
+        if required_skills is not None:
+            if not isinstance(required_skills, list):
+                raise RoundtableError("'required_skills' must be a list of skills")
+            skills: list[str] = []
+            for skill in required_skills:
+                if not isinstance(skill, str):
+                    raise RoundtableError(
+                        "'required_skills' must be a list of skills"
+                    )
+                if not skill:
+                    continue
+                _check_size("required_skill", skill, REQUIRED_SKILL_MAX)
+                if skill not in skills:
+                    skills.append(skill)
+            if len(skills) > REQUIRED_SKILLS_MAX:
+                raise RoundtableError(
+                    f"at most {REQUIRED_SKILLS_MAX} required skills "
+                    f"({len(skills)} given); rejected, not truncated"
+                )
+            return skills
+        if required_skill is not None:
+            _check_size("required_skill", required_skill, REQUIRED_SKILL_MAX)
+            return [required_skill] if required_skill else []
+        return []
+
+    @staticmethod
+    def _missing_skills(have: list[str], required: list[str]) -> list[str]:
+        """Required skills the agent does not have, in task order."""
+        have_set = set(have)
+        return [skill for skill in required if skill not in have_set]
+
+    def _active_worker_skills(self) -> list[list[str]]:
+        """Skill lists of every active worker (agents.json, via the
+        agents table — agents removed from the config are inactive)."""
+        rows = self._conn.execute(
+            "SELECT skills FROM agents WHERE active = 1 AND role = 'worker'"
+        ).fetchall()
+        return [skills_from_json(r["skills"]) for r in rows]
 
     # -- audit / presence --------------------------------------------------
     def log_audit(
@@ -344,6 +420,7 @@ class Board:
         title: str,
         description: str = "",
         required_skill: str | None = None,
+        required_skills: list[str] | None = None,
         assignee: str | None = None,
     ) -> dict:
         self._require_leader(agent)
@@ -352,7 +429,7 @@ class Board:
             raise RoundtableError("title must not be empty")
         _check_size("title", title, TITLE_MAX)
         _check_size("description", description or "", DESCRIPTION_MAX)
-        _check_size("required_skill", required_skill or "", REQUIRED_SKILL_MAX)
+        skills = self._normalize_required_skills(required_skill, required_skills)
         if assignee is not None:
             target = self._agents.get(assignee)
             if target is None:
@@ -362,16 +439,24 @@ class Board:
                     f"assignee {assignee!r} is a {target.role}, not a worker; "
                     "only workers can claim tasks"
                 )
+            # M7: a direct assignee who lacks a required skill is
+            # rejected, not warned — the task could never be claimed.
+            missing = self._missing_skills(target.skills, skills)
+            if missing:
+                raise RoundtableError(
+                    f"assignee {assignee!r} lacks required skill(s): "
+                    f"{', '.join(missing)}"
+                )
         now = _now()
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO tasks (title, description, required_skill, "
+                "INSERT INTO tasks (title, description, required_skills, "
                 "status, created_by, assignee, created_at, updated_at) "
                 "VALUES (?, ?, ?, 'open', ?, ?, ?, ?)",
                 (
                     title,
                     description or "",
-                    (required_skill or None),
+                    skills_to_json(skills),
                     agent.name,
                     assignee,
                     now,
@@ -380,7 +465,24 @@ class Board:
             )
             task_id = cur.lastrowid
             self._conn.commit()
-            return self._task_dict(self._get_task_row(task_id))
+            task = self._task_dict(self._get_task_row(task_id))
+            # M7: warn (not an error) when nobody can claim this
+            # task — no active worker has every required skill — so
+            # it does not wait forever unnoticed. A direct assignee
+            # already passed the check above, so it can claim.
+            warning = None
+            if assignee is None and not any(
+                set(worker_skills) >= set(skills)
+                for worker_skills in self._active_worker_skills()
+            ):
+                if skills:
+                    warning = (
+                        "no active worker has all required skills "
+                        f"({', '.join(skills)}); this task may wait forever"
+                    )
+                else:
+                    warning = "no active worker is available to claim this task"
+            return {"task": task, "warning": warning}
 
     def list_tasks(
         self,
@@ -389,6 +491,7 @@ class Board:
         assignee: str | None = None,
         limit: int = LIST_LIMIT_DEFAULT,
         offset: int = 0,
+        claimable_by_me: bool = False,
     ) -> dict:
         if status is not None and status not in STATUSES:
             raise RoundtableError(f"unknown status: {status!r}")
@@ -414,6 +517,34 @@ class Board:
             where = " WHERE " + " AND ".join(clauses)
             query += where
             count_query += where
+        if claimable_by_me:
+            # M7: only a worker can ask for tasks it may claim. A
+            # task is claimable by the caller when it is open, not
+            # assigned to someone else, and the caller holds every
+            # required skill. The skill check needs the stored JSON,
+            # so this filters in Python, not SQL — but the total is
+            # still the filtered count, and paging applies to the
+            # filtered list, as in the SQL path below.
+            self._require_worker(agent)
+            with self._lock:
+                rows = self._conn.execute(
+                    query + " ORDER BY id ASC", params
+                ).fetchall()
+            mine = set(agent.skills)
+            claimable = [
+                r
+                for r in rows
+                if r["status"] == "open"
+                and (r["assignee"] is None or r["assignee"] == agent.name)
+                and set(skills_from_json(r["required_skills"])) <= mine
+            ]
+            page = claimable[offset : offset + limit]
+            return {
+                "tasks": [self._task_dict(r) for r in page],
+                "limit": limit,
+                "offset": offset,
+                "total": len(claimable),
+            }
         query += " ORDER BY id ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._lock:
@@ -448,6 +579,17 @@ class Board:
                 raise RoundtableError(
                     f"task {task_id} is assigned to {row['assignee']!r}, "
                     f"not to {agent.name!r}"
+                )
+            # M7: skills are enforced on the server. The worker must
+            # have every required skill; skills come only from
+            # agents.json (the token), never from the agent.
+            missing = self._missing_skills(
+                agent.skills, skills_from_json(row["required_skills"])
+            )
+            if missing:
+                raise RoundtableError(
+                    f"worker {agent.name!r} lacks required skill(s): "
+                    f"{', '.join(missing)}"
                 )
             # Atomic: only one claimant can flip open -> claimed.
             cur = self._conn.execute(
