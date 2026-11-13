@@ -297,6 +297,18 @@ def test_claims_only_tasks_matching_its_skill(server, fake):
     assert rust["status"] == "open" and rust["assignee"] is None
 
 
+def test_worker_claims_only_what_the_server_allows(server, fake):
+    # SPEC section 9, test 22 (M7): the worker uses the server's
+    # claimable_by_me rule instead of its own skill filter — a task
+    # it only partly matches is never claimed, even though it holds
+    # one of the required skills.
+    url = server["url"]
+    cfg = worker_config(url, fake.url)
+    task = make_task(url, "Multi-skill task", required_skills=["python", "rust"])
+    assert drive(cfg) == "none"
+    assert get_task(url, task["id"])["status"] == "open"
+
+
 def test_does_not_claim_tasks_assigned_to_another_worker(server, fake):
     url = server["url"]
     cfg = worker_config(url, fake.url)
@@ -484,6 +496,10 @@ def test_startup_releases_tasks_claimed_before_a_crash(server, fake, caplog):
 # -- AUDIT-M2: W3 — matching tasks must not be starved by paging ----------
 
 def test_pages_past_non_matching_tasks(tmp_path, fake):
+    # M7: the server now filters (claimable_by_me), so the worker's
+    # list holds only the matching task — but the outcome this test
+    # guards is the same: a matching task is never starved by many
+    # non-matching ones.
     port = free_port()
     proc, url, _ = start_server(tmp_path, port, rate_limit=1000)
     try:

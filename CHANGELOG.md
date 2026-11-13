@@ -2,6 +2,75 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M7: skills are enforced on the server (2026-11-13)
+
+Owner decision, 2026-11-13. Today `claim_task` does not check
+`required_skill` at all; only `worker.py` filters voluntarily.
+From M7 the server enforces skills: a task may require several
+skills, `claim_task` is rejected unless the worker holds every
+one, and `worker.py` uses the server's `claimable_by_me` rule
+instead of its own filter. Built on branch `m7-skills` from main
+898b49d (M6 + M6 notes merged); reviewed by the Auditor as a pull
+request into main. NOT deployed: the VM still runs M6 until the
+Owner deploys after the audit.
+
+- **M7.1 (several skills per task).** `create_task` accepts
+  `required_skills` (a list, each at most 100 chars, at most 10).
+  The old `required_skill` argument still works and means a
+  one-item list; giving both is an error. Task output carries
+  both forms (`required_skills` the list; `required_skill` the
+  first skill, or null) so existing clients still work.
+  Duplicates are dropped, and an empty skill means no skill (as
+  the old argument treated `""` as unset).
+- **M7.2 (claim enforcement).** `claim_task` is rejected with a
+  clear error naming the missing skill(s) unless the worker holds
+  every required skill. Skills come only from `agents.json` (set
+  by the Owner), via the token — never from the agent. A task
+  with no required skills can be claimed by any worker, as before.
+- **M7.3 (warning + assignee).** `create_task` warns the leader
+  in its result (a `warning` key, not an error) when no active
+  worker has all the required skills, so the task does not wait
+  forever unnoticed. A direct assignee who lacks a skill is
+  rejected.
+- **M7.4 (`claimable_by_me` + `worker.py`).** `list_tasks` gains
+  an optional `claimable_by_me` filter for workers (open tasks
+  the caller may claim: not assigned to someone else, every
+  required skill held); the leader gets a clear error for it.
+  `worker.py` now asks the server for claimable tasks instead of
+  filtering by skill itself; its `_matches` method is gone.
+- **M7.5 (migration).** `tasks.required_skill` (a single string)
+  becomes `required_skills` (a JSON list), via a crash-safe
+  rebuild (same pattern as the M5 messages migration: `DROP
+  TABLE IF EXISTS tasks_new` first, one explicit transaction). A
+  set skill becomes a one-item list, an unset one becomes [].
+  The rebuild switches foreign-key enforcement off for the
+  duration (the messages and submissions tables reference tasks,
+  and dropping a parent table fails with enforcement on) and back
+  on afterwards; ids are copied unchanged, so references stay
+  valid, and the tasks indexes and the AUTOINCREMENT sequence are
+  restored. The migration test also seeds a leftover `tasks_new`
+  table from a crashed run. The audit log records the new
+  arguments as usual (`required_skills` on `create_task`,
+  `claimable_by_me` on `list_tasks`).
+- **Tests.** SPEC section 9 gains tests 16–22;
+  `tests/test_m7_skills.py` adds 9 feature tests (including the
+  migration and audit-arguments tests); `tests/test_worker.py`
+  adds the server-rule test. Every new test was run against the
+  M6 code first and failed — the two "can claim" tests needed the
+  `required_skills` output assertion to fail on M6, since the old
+  code let anyone claim — and passes after. Full suite: 133
+  passed (was 117).
+- **Deviations.** None from the M7 task. Two judgement calls are
+  recorded here: the `claimable_by_me` filter is workers-only (a
+  leader asking for it gets a clear error) — the task says the
+  filter is "for workers", and a leader cannot claim anything, so
+  returning an empty list would hide a misuse. No DEPLOY.md
+  "Updating to M7" section was added: the migration runs on first
+  start like M5/M6, and the update procedure is the existing Step
+  46 with the audited commit (the Owner deploys after the audit).
+- **Open questions.** M8 (the leader working in emergencies) and
+  M9 (subtasks) come later, after their own decisions; not started.
+
 ## M6 notes (N3–N6) (2026-11-13)
 
 M6 is deployed on HermesVM (90d215a; AUDIT-M6-FIXES.md PASS) and

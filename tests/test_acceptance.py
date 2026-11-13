@@ -29,12 +29,23 @@ REPO = Path(__file__).resolve().parent.parent
 LEADER = "leader-test-token-" + "1" * 32
 CODER = "coder-test-token-" + "2" * 32
 REVIEWER = "reviewer-test-token-" + "3" * 32
+POLY = "poly-test-token-" + "4" * 32
 
 AGENTS = {
     "agents": [
         {"name": "planner", "role": "leader", "skills": ["planning"], "token": LEADER},
         {"name": "coder", "role": "worker", "skills": ["python"], "token": CODER},
         {"name": "reviewer", "role": "worker", "skills": ["review"], "token": REVIEWER},
+    ]
+}
+
+# M7: a worker holding two skills, for the multi-skill tests.
+M7_AGENTS = {
+    "agents": [
+        {"name": "planner", "role": "leader", "skills": ["planning"], "token": LEADER},
+        {"name": "coder", "role": "worker", "skills": ["python"], "token": CODER},
+        {"name": "reviewer", "role": "worker", "skills": ["review"], "token": REVIEWER},
+        {"name": "poly", "role": "worker", "skills": ["python", "rust"], "token": POLY},
     ]
 }
 
@@ -45,9 +56,11 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def start_server(tmp: Path, port: int, rate_limit: int = 60) -> subprocess.Popen:
+def start_server(
+    tmp: Path, port: int, rate_limit: int = 60, agents: dict = AGENTS
+) -> subprocess.Popen:
     config = tmp / "agents.json"
-    config.write_text(json.dumps(AGENTS), encoding="utf-8")
+    config.write_text(json.dumps(agents), encoding="utf-8")
     db_path = tmp / "roundtable.db"
     env = dict(os.environ)
     env.update(
@@ -429,3 +442,150 @@ def test_15_failed_call_leaves_audit_row_with_arguments_and_error(server):
     assert rows[0]["outcome"] == "error"
     assert json.loads(rows[0]["arguments"]) == {"task_id": task["id"]}
     assert "only the leader" in rows[0]["error"]
+
+
+# -- SPEC section 9, M7 ----------------------------------------------------
+
+def test_16_worker_without_required_skill_cannot_claim(server):
+    # SPEC section 9, test 16 (M7): claim_task is rejected unless
+    # the worker holds every required skill.
+    url = server["url"]
+    task = make_task(url, "M7 no-skill task", required_skills=["rust"])
+    err, data = call(url, CODER, "claim_task", {"task_id": task["id"]})
+    assert err
+    assert "lacks required skill" in str(data)
+    assert "rust" in str(data)
+    err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
+    assert not err and data["task"]["status"] == "open"
+    assert data["task"]["assignee"] is None
+
+
+def test_17_worker_with_all_required_skills_can_claim(tmp_path):
+    # SPEC section 9, test 17 (M7): a worker holding every required
+    # skill claims.
+    port = free_port()
+    proc = start_server(tmp_path, port, agents=M7_AGENTS)
+    url = f"http://127.0.0.1:{port}/mcp"
+    try:
+        task = make_task(url, "M7 all-skills task", required_skills=["python", "rust"])
+        assert task["required_skills"] == ["python", "rust"]
+        assert task["required_skill"] == "python"  # legacy view: first skill
+        err, data = call(url, POLY, "claim_task", {"task_id": task["id"]})
+        assert not err, data
+        assert data["task"]["status"] == "claimed"
+        assert data["task"]["assignee"] == "poly"
+    finally:
+        stop_server(proc)
+
+
+def test_18_partial_multi_skill_match_is_rejected(tmp_path):
+    # SPEC section 9, test 18 (M7): holding some of the required
+    # skills is not enough.
+    port = free_port()
+    proc = start_server(tmp_path, port, agents=M7_AGENTS)
+    url = f"http://127.0.0.1:{port}/mcp"
+    try:
+        task = make_task(url, "M7 partial task", required_skills=["python", "rust"])
+        err, data = call(url, CODER, "claim_task", {"task_id": task["id"]})
+        assert err
+        assert "lacks required skill" in str(data)
+        assert "rust" in str(data)
+        err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
+        assert not err and data["task"]["status"] == "open"
+    finally:
+        stop_server(proc)
+
+
+def test_19_no_matching_worker_warning(server):
+    # SPEC section 9, test 19 (M7): create_task warns (not an error)
+    # when no active worker has all the required skills.
+    url = server["url"]
+    err, data = call(
+        url, LEADER, "create_task",
+        {"title": "M7 warn task", "required_skills": ["go"]},
+    )
+    assert not err, data
+    assert data["task"]["status"] == "open"
+    assert "warning" in data
+    assert "go" in data["warning"]
+    err, data = call(
+        url, LEADER, "create_task",
+        {"title": "M7 no-warn task", "required_skills": ["python"]},
+    )
+    assert not err, data
+    assert "warning" not in data
+    # A direct assignee who lacks a skill is rejected, not warned.
+    err, _ = call(
+        url, LEADER, "create_task",
+        {"title": "M7 bad assignee", "required_skills": ["rust"],
+         "assignee": "coder"},
+    )
+    assert err
+
+
+def test_20_old_required_skill_argument_still_works(server):
+    # SPEC section 9, test 20 (M7): the old required_skill argument
+    # means a one-item list, and the task output carries both forms.
+    url = server["url"]
+    err, data = call(
+        url, LEADER, "create_task",
+        {"title": "M7 legacy task", "required_skill": "python"},
+    )
+    assert not err, data
+    assert data["task"]["required_skills"] == ["python"]
+    assert data["task"]["required_skill"] == "python"
+    err, data = call(url, CODER, "claim_task", {"task_id": data["task"]["id"]})
+    assert not err, data
+    err, data = call(
+        url, LEADER, "create_task",
+        {"title": "M7 legacy rust", "required_skill": "rust"},
+    )
+    assert not err, data
+    assert data["task"]["required_skills"] == ["rust"]
+    err, _ = call(url, CODER, "claim_task", {"task_id": data["task"]["id"]})
+    assert err
+
+
+def test_21_migration_of_m6_database_keeps_all_tasks(tmp_path):
+    # SPEC section 9, test 21 (M7): an M6 database (tasks with a
+    # single required_skill) migrates: a set skill becomes a
+    # one-item list, an unset one becomes [].
+    db_path = tmp_path / "roundtable.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', "
+            "required_skill TEXT, status TEXT NOT NULL DEFAULT 'open' "
+            "CHECK (status IN ('open', 'claimed', 'submitted', 'done', "
+            "'cancelled')), created_by TEXT NOT NULL, assignee TEXT, "
+            "result TEXT, review_note TEXT, created_at TEXT NOT NULL, "
+            "updated_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO tasks (title, required_skill, status, created_by, "
+            "created_at, updated_at) VALUES "
+            "('M6 python task', 'python', 'open', 'planner', "
+            "'2026-11-12T00:00:00Z', '2026-11-12T00:00:00Z'), "
+            "('M6 general task', NULL, 'open', 'planner', "
+            "'2026-11-12T00:00:00Z', '2026-11-12T00:00:00Z')"
+        )
+        conn.commit()
+    port = free_port()
+    proc = start_server(tmp_path, port)
+    url = f"http://127.0.0.1:{port}/mcp"
+    try:
+        err, data = call(url, LEADER, "get_task", {"task_id": 1})
+        assert not err, data
+        assert data["task"]["required_skills"] == ["python"]
+        assert data["task"]["required_skill"] == "python"
+        err, data = call(url, LEADER, "get_task", {"task_id": 2})
+        assert not err, data
+        assert data["task"]["required_skills"] == []
+        assert data["task"]["required_skill"] is None
+        # Enforcement applies to migrated tasks.
+        err, _ = call(url, REVIEWER, "claim_task", {"task_id": 1})
+        assert err
+        err, data = call(url, CODER, "claim_task", {"task_id": 1})
+        assert not err, data
+    finally:
+        stop_server(proc)
