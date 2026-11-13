@@ -245,7 +245,13 @@ def test_m5_updating_section():
     # "restart Roundtable" wraps across two lines in the guide.
     assert "restart roundtable" in " ".join(updating.split()).lower()
     assert "Reconnect" in updating
-    assert "scripts/copy-worker-token.sh" in updating
+    # N1 (AUDIT-M7-FIXES): the stale "Muse needs the new worker
+    # token" sentence is gone — no rotation since M5, so Muse's
+    # stored credential stays valid; re-paste only after an actual
+    # rotation (CONNECT.md Step 16).
+    assert "stored credential remains valid" in updating
+    assert "Step 16" in updating
+    assert "needs the new worker token" not in updating
     # R3: if the migration itself failed, restore the backup too.
     assert "Step 44" in updating
 
@@ -269,7 +275,13 @@ def test_m6_updating_section():
     assert "AUDITED_COMMIT" in updating
     assert "restart roundtable" in " ".join(updating.split()).lower()
     assert "Reconnect" in updating
-    assert "scripts/copy-worker-token.sh" in updating
+    # N1 (AUDIT-M7-FIXES): the stale "Muse needs the new worker
+    # token" sentence is gone — no rotation since M5, so Muse's
+    # stored credential stays valid; re-paste only after an actual
+    # rotation (CONNECT.md Step 16).
+    assert "stored credential remains valid" in updating
+    assert "Step 16" in updating
+    assert "needs the new worker token" not in updating
     # R3: if the migration itself failed, restore the backup too.
     assert "Step 44" in updating
     # N6: the size check totals .db, -wal and -shm (plain `du -h`
@@ -309,7 +321,13 @@ def test_m7_updating_section():
     assert "AUDITED_COMMIT" in updating
     assert "restart roundtable" in " ".join(updating.split()).lower()
     assert "Reconnect" in updating
-    assert "scripts/copy-worker-token.sh" in updating
+    # N1 (AUDIT-M7-FIXES): the stale "Muse needs the new worker
+    # token" sentence is gone — no rotation since M5, so Muse's
+    # stored credential stays valid; re-paste only after an actual
+    # rotation (CONNECT.md Step 16).
+    assert "stored credential remains valid" in updating
+    assert "Step 16" in updating
+    assert "needs the new worker token" not in updating
     assert "Step 44" in updating
     assert "Step 47" in updating
     # R1: the rollback trap — M6 code cannot run on a migrated

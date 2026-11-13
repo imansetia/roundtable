@@ -1322,11 +1322,9 @@ commit:
    back-filled review history.
 4. **Reconnect both apps.** The restart drops the leader's MCP
    connection: in the leader session, open `/mcp` and choose
-   **Reconnect** for `roundtable`. Muse needs the new worker token
-   — the old one was rotated after the M4 demo, so take the
-   current one out with `scripts/copy-worker-token.sh` (see
-   `docs/CONNECT.md` Step 14) and paste it into Muse's secure
-   entry card (field "Kunci API"). If the service fails to start,
+   **Reconnect** for `roundtable`. Muse's stored credential remains valid — reconnect it
+   normally, and re-paste a token only after an actual rotation
+   (CONNECT.md Step 16). If the service fails to start,
    roll back (Step 47) rather than guessing. If the migration
    itself failed (the log shows a database error), restore the
    backup (Step 44) as well as rolling back (Step 47) — the
@@ -1380,11 +1378,9 @@ one — back up first, then Step 46 with the new audited commit:
    history.
 4. **Reconnect both apps.** The restart drops the leader's MCP
    connection: in the leader session, open `/mcp` and choose
-   **Reconnect** for `roundtable`. Muse needs the new worker token
-   — the old one was rotated after the M4 demo, so take the
-   current one out with `scripts/copy-worker-token.sh` (see
-   `docs/CONNECT.md` Step 14) and paste it into Muse's secure
-   entry card (field "Kunci API"). If the service fails to start,
+   **Reconnect** for `roundtable`. Muse's stored credential remains valid — reconnect it
+   normally, and re-paste a token only after an actual rotation
+   (CONNECT.md Step 16). If the service fails to start,
    roll back (Step 47) rather than guessing. If the migration
    itself failed (the log shows a database error), restore the
    backup (Step 44) as well as rolling back (Step 47) — the
@@ -1491,11 +1487,9 @@ with the new audited commit:
    assignee, result and review note.
 4. **Reconnect both apps.** The restart drops the leader's MCP
    connection: in the leader session, open `/mcp` and choose
-   **Reconnect** for `roundtable`. Muse needs the new worker token
-   — the old one was rotated after the M4 demo, so take the
-   current one out with `scripts/copy-worker-token.sh` (see
-   `docs/CONNECT.md` Step 14) and paste it into Muse's secure
-   entry card (field "Kunci API"). If the service fails to start,
+   **Reconnect** for `roundtable`. Muse's stored credential remains valid — reconnect it
+   normally, and re-paste a token only after an actual rotation
+   (CONNECT.md Step 16). If the service fails to start,
    roll back (Step 47) rather than guessing.
 
 **Rollback needs the backup too.** This migration is different
