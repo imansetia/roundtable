@@ -1397,13 +1397,17 @@ grows with use: every submission stores the full result (up to
 busy board can grow by megabytes per month. Check its size with:
 
 ```bash
-sudo -u roundtable du -ch /srv/roundtable/data/roundtable.db*
+sudo -u roundtable sh -c 'du -ch /srv/roundtable/data/roundtable.db*'
 ```
 
 The glob matters: while the server runs, most of the data sits
 in `roundtable.db-wal`, so plain `du -h roundtable.db` showed
 4.0K on the VM. Watch the `total` line — the `.db` file plus
-`-wal` and `-shm` together.
+`-wal` and `-shm` together. The glob is expanded by a shell
+running as `roundtable` (`sh -c` under `sudo`): `azureuser`'s
+own shell cannot read the data directory (mode 700), so
+expanding the glob before `sudo` matches nothing and `du` fails
+with "No such file or directory".
 
 and see what is in it with (read-only, as `roundtable`):
 
@@ -1427,7 +1431,7 @@ the disk the database lives on next to the database itself:
 
 ```bash
 df -h /
-sudo -u roundtable du -ch /srv/roundtable/data/roundtable.db*
+sudo -u roundtable sh -c 'du -ch /srv/roundtable/data/roundtable.db*'
 ```
 
 **What to do when the cap is reached.** The board keeps working
@@ -1450,7 +1454,7 @@ deployed; act while there is still room:
 
 ```bash
 df -h /
-sudo -u roundtable du -ch /srv/roundtable/data/roundtable.db*
+sudo -u roundtable sh -c 'du -ch /srv/roundtable/data/roundtable.db*'
 ```
 
 Watch the `total` line of the `du` output against the free space

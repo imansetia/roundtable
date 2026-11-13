@@ -36,6 +36,32 @@ change except N5.
   /srv/roundtable/data/roundtable.db*`, totalling `.db`, `-wal`
   and `-shm`: plain `du -h roundtable.db` showed 4.0K on the VM
   because most data sits in `-wal` while the server runs.
+- **D1 (audit re-check: CHANGES REQUESTED).** The `du -ch`
+  glob failed on the VM: `azureuser`'s shell expands it before
+  `sudo` runs, but `azureuser` cannot read the data directory
+  (mode 700), so `du` received the literal `roundtable.db*`.
+  All three size checks now use `sudo -u roundtable sh -c
+  'du -ch /srv/roundtable/data/roundtable.db*'`, and the guard
+  asserts that form appears exactly three times. The audit
+  report is added unchanged at
+  `docs/audits/AUDIT-PR3-M6-NOTES.md`; N4 and N5 were confirmed
+  correct, N3 the right routine. The Auditor could not re-run
+  the suite this time (IPv6-only container, no PyPI) — the suite
+  is re-run on the fixed head before merge.
+- **N7 (noted).** The three `scripts/*.sh` lost their
+  executable bit on GitHub (`100755 → 100644`): the connector's
+  snapshot push carries file contents only, no modes. The guide
+  always runs them with `bash …` or `source …`, so nothing
+  breaks. Restore the mode when a git CLI push is possible
+  (`git update-index --chmod=+x scripts/*.sh`).
+- **N8 (noted).** Commits pushed through the connector are
+  authored as the Owner's GitHub account (`imansetia`), because
+  the connector acts as the Owner — including the snapshot
+  commit on this branch and the D1 fix commit. Branch protection
+  must therefore have "Do not allow bypassing the above
+  settings" enabled, or the Owner's own admin rights (and so
+  Muse) can skip the pull request; the Owner should confirm
+  that setting.
 
 ## M6 audit fixes (2026-11-12, complete — re-audit PASS, deployed on HermesVM)
 

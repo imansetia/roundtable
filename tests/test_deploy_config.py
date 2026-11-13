@@ -274,8 +274,14 @@ def test_m6_updating_section():
     assert "Step 44" in updating
     # N6: the size check totals .db, -wal and -shm (plain `du -h`
     # on the .db file alone showed 4.0K on the VM).
-    assert "du -ch /srv/roundtable/data/roundtable.db*" in updating
-    assert "du -h /srv/roundtable/data/roundtable.db" not in updating
+    # D1: the glob must expand as roundtable, not as azureuser
+    # (the data directory is mode 700): run du under sh -c via
+    # sudo, in all three size checks in this section.
+    assert updating.count(
+        "sudo -u roundtable sh -c 'du -ch "
+        "/srv/roundtable/data/roundtable.db*'"
+    ) == 3
+    assert "sudo -u roundtable du -ch" not in updating
     # M6 audit fix F2: the history cap, the disk-space check, and
     # what to do when the cap is reached.
     assert "ROUNDTABLE_HISTORY_MAX_MB" in updating
