@@ -1397,8 +1397,17 @@ grows with use: every submission stores the full result (up to
 busy board can grow by megabytes per month. Check its size with:
 
 ```bash
-sudo -u roundtable du -h /srv/roundtable/data/roundtable.db
+sudo -u roundtable sh -c 'du -ch /srv/roundtable/data/roundtable.db*'
 ```
+
+The glob matters: while the server runs, most of the data sits
+in `roundtable.db-wal`, so plain `du -h roundtable.db` showed
+4.0K on the VM. Watch the `total` line — the `.db` file plus
+`-wal` and `-shm` together. The glob is expanded by a shell
+running as `roundtable` (`sh -c` under `sudo`): `azureuser`'s
+own shell cannot read the data directory (mode 700), so
+expanding the glob before `sudo` matches nothing and `du` fails
+with "No such file or directory".
 
 and see what is in it with (read-only, as `roundtable`):
 
@@ -1422,7 +1431,7 @@ the disk the database lives on next to the database itself:
 
 ```bash
 df -h /
-sudo -u roundtable du -h /srv/roundtable/data/roundtable.db
+sudo -u roundtable sh -c 'du -ch /srv/roundtable/data/roundtable.db*'
 ```
 
 **What to do when the cap is reached.** The board keeps working
@@ -1433,6 +1442,26 @@ and restart Roundtable (`sudo systemctl restart roundtable`),
 or free disk first if the disk itself is full. Do not delete
 history rows by hand: the log is append-only by design, and
 pruning old history is a decision for the Owner.
+
+**Disk check (weekly).** The cap bounds only the audit log's
+stored arguments — the history rows themselves are uncapped:
+every submission keeps its full result (up to 20 KB), and every
+audit row keeps its agent, tool, task, outcome and error. So
+check the disk once a week, even with the cap on. Hermes shares
+this disk, so a board that grows unchecked can take Hermes down
+with it. The VM had about 53 GB free when Roundtable was
+deployed; act while there is still room:
+
+```bash
+df -h /
+sudo -u roundtable sh -c 'du -ch /srv/roundtable/data/roundtable.db*'
+```
+
+Watch the `total` line of the `du` output against the free space
+in `df -h /`. Below 10 GB free, investigate what is growing;
+below 5 GB, act now — free disk space, and ask the Owner about
+pruning history. Never delete history rows by hand: that is a
+decision for the Owner, not a disk-cleanup step.
 
 **Undo:** Step 47 (and Step 44 if the migration failed).
 

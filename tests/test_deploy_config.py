@@ -272,12 +272,27 @@ def test_m6_updating_section():
     assert "scripts/copy-worker-token.sh" in updating
     # R3: if the migration itself failed, restore the backup too.
     assert "Step 44" in updating
-    assert "du -h" in updating or "ls -lh" in updating
+    # N6: the size check totals .db, -wal and -shm (plain `du -h`
+    # on the .db file alone showed 4.0K on the VM).
+    # D1: the glob must expand as roundtable, not as azureuser
+    # (the data directory is mode 700): run du under sh -c via
+    # sudo, in all three size checks in this section.
+    assert updating.count(
+        "sudo -u roundtable sh -c 'du -ch "
+        "/srv/roundtable/data/roundtable.db*'"
+    ) == 3
+    assert "sudo -u roundtable du -ch" not in updating
     # M6 audit fix F2: the history cap, the disk-space check, and
     # what to do when the cap is reached.
     assert "ROUNDTABLE_HISTORY_MAX_MB" in updating
     assert "df -h /" in updating
     assert "raise" in updating.lower()
+    # N3: a weekly disk check, because the history rows themselves
+    # are uncapped (only their arguments are).
+    assert "Disk check" in updating
+    assert "weekly" in updating.lower()
+    assert "10 GB" in updating
+    assert "5 GB" in updating
 
 
 def test_m6_history_cap_in_env_example():

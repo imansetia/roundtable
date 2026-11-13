@@ -138,12 +138,17 @@ class Board:
         # F2: the history cap bounds the audit log's stored
         # arguments. The running total starts from what is already
         # stored, so a database with existing history counts it.
+        # It counts bytes, like the runtime total (len of the UTF-8
+        # encoding): LENGTH() alone counts characters, so a stored
+        # argument with multi-byte characters would under-count.
+        # CAST to BLOB makes LENGTH() count bytes. (N5.)
         # It is a soft limit on one server process: all writes go
         # through this Board, and a small drift would only move the
         # cap by bytes, never lose a row.
         self._history_max_bytes = history_max_bytes
         self._history_bytes = conn.execute(
-            "SELECT COALESCE(SUM(LENGTH(arguments)), 0) FROM audit_log"
+            "SELECT COALESCE(SUM(LENGTH(CAST(arguments AS BLOB))), 0) "
+            "FROM audit_log"
         ).fetchone()[0]
         self._history_cap_warned = False
         with self._lock:

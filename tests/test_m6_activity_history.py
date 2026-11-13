@@ -403,6 +403,59 @@ def test_m6_f2_history_cap_omits_arguments_and_warns_once(tmp_path):
         stop_server(proc)
 
 
+def test_m6_n5_history_cap_counts_bytes_at_startup(tmp_path):
+    """N5: the start-up total must count stored arguments in bytes,
+    like the runtime total — not in characters. SQLite's LENGTH()
+    counts characters, so a stored argument with multi-byte
+    characters under-counts: one row of 500 'é' (2 bytes each in
+    UTF-8) is ~580 characters but ~1,080 bytes. With the cap set
+    between the two counts, the next call's arguments must be
+    omitted. Counting characters would store them in full."""
+    tmp = tmp_path
+    port = free_port()
+    # Server 1: one call with a non-ASCII description, so the
+    # stored arguments hold multi-byte characters.
+    proc, url, db_path = start_server(tmp, port, AGENTS)
+    try:
+        err, data = call(
+            url, LEADER, "create_task",
+            {"title": "N5 task", "description": "é" * 500},
+        )
+        assert not err, data
+    finally:
+        stop_server(proc)
+    rows = db_rows(db_path, "SELECT arguments FROM audit_log")
+    assert len(rows) == 1
+    stored = rows[0]["arguments"]
+    char_len = len(stored)
+    byte_len = len(stored.encode("utf-8"))
+    assert byte_len - char_len >= 400, "the seed row must be mostly multi-byte"
+    # A cap between the character count and the byte count.
+    cap_bytes = char_len + 100
+    assert char_len < cap_bytes < byte_len
+    # Server 2 on the same database, with that cap: the next call
+    # is tiny (whoami, arguments "{}"), so only a byte-counting
+    # start-up total crosses the cap.
+    port = free_port()
+    proc, url, _ = start_server(
+        tmp, port, AGENTS,
+        extra_env={"ROUNDTABLE_HISTORY_MAX_MB": str(cap_bytes / (1024 * 1024))},
+    )
+    try:
+        err, data = call(url, LEADER, "whoami", {})
+        assert not err, data
+        rows = db_rows(
+            db_path,
+            "SELECT arguments FROM audit_log WHERE tool = 'whoami'",
+        )
+        assert len(rows) == 1
+        marker = json.loads(rows[0]["arguments"])
+        assert marker["omitted"] == "history_cap"
+        assert marker["original_bytes"] == len(b"{}")
+    finally:
+        stop_server(proc)
+
+
 # -- M6: migration of an M5 database ---------------------------------------
 
 M5_SCHEMA = """

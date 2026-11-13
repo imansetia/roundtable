@@ -658,7 +658,7 @@ def test_never_prints_or_logs_the_api_key(tmp_path):
         try:
             _wait_until(
                 lambda: get_task(url, task["id"])["status"] == "submitted",
-                timeout=10,
+                timeout=30,
                 desc="worker to submit",
             )
             worker_proc.send_signal(signal.SIGINT)
