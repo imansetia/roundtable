@@ -2,6 +2,27 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M7 notes (N1–N2) (2026-11-14)
+
+M7 is deployed on HermesVM (a58d786; AUDIT-M7-FIXES.md PASS) and
+the Owner verified the migrated database directly — the M4 demo
+task shows required_skills `["python"]`, status done. Small
+docs-only follow-ups on branch `chore/m7-notes`, reviewed by the
+Auditor as a pull request into `main`. No server behaviour change.
+
+- **N1 (stale token sentence).** The "Updating to M5", "Updating
+  to M6" and "Updating to M7" sections all said "Muse needs the
+  new worker token — the old one was rotated after the M4 demo",
+  copied from section to section. No token rotation has happened
+  since M5, so Muse's stored credential stays valid across a
+  restart. All three sections now say the restart drops the
+  leader's MCP connection and Muse's stored credential remains
+  valid — reconnect it normally, and re-paste a token only after
+  an actual rotation (CONNECT.md Step 16). The three guard tests
+  assert the new wording and the absence of the old sentence.
+- **N2 (re-audit report).** `docs/audits/AUDIT-M7-FIXES.md` added
+  unchanged.
+
 ## M7: skills are enforced on the server (2026-11-13)
 
 Owner decision, 2026-11-13. Today `claim_task` does not check
