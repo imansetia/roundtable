@@ -1465,6 +1465,53 @@ decision for the Owner, not a disk-cleanup step.
 
 **Undo:** Step 47 (and Step 44 if the migration failed).
 
+### Updating to M7
+
+M7 enforces skills on the server: `claim_task` is rejected unless
+the worker holds every required skill, and a task may require
+several skills (`required_skills`, a list). The `tasks` table is
+migrated on first start: `required_skill` (a single string)
+becomes `required_skills` (a JSON list) — a set skill becomes a
+one-item list, an unset one becomes [] (see CHANGELOG.md "M7").
+The update itself is the normal one — back up first, then Step 46
+with the new audited commit:
+
+1. **Back up the database first (Step 43).** Do not skip this:
+   the migration rebuilds the `tasks` table, and the backup is
+   the way back.
+2. **Record the current version (Step 45)**, then set
+   `$AUDITED_COMMIT` to the hash the Auditor gives you for M7 and
+   run **Step 46** (fetch, check out, reinstall, restart
+   Roundtable only). Nothing else is restarted — Hermes, nginx
+   and certbot are untouched.
+3. **Verify:** Step 24 (local 401 check) and Step 41
+   (authenticated check through nginx) must pass, and the service
+   must show `Active: active (running)`. The migration runs on
+   first start; existing tasks keep their skills, status,
+   assignee, result and review note.
+4. **Reconnect both apps.** The restart drops the leader's MCP
+   connection: in the leader session, open `/mcp` and choose
+   **Reconnect** for `roundtable`. Muse needs the new worker token
+   — the old one was rotated after the M4 demo, so take the
+   current one out with `scripts/copy-worker-token.sh` (see
+   `docs/CONNECT.md` Step 14) and paste it into Muse's secure
+   entry card (field "Kunci API"). If the service fails to start,
+   roll back (Step 47) rather than guessing.
+
+**Rollback needs the backup too.** This migration is different
+from M5 and M6: the rebuilt `tasks` table has no `required_skill`
+column, so M6 code cannot run on a migrated database at all —
+`create_task` and `list_tasks` both fail (the Auditor's probe:
+M6 code started on a migrated database errors on every call).
+So if the service fails after the update, or you roll back
+(Step 47) for any reason, you must also restore the backup
+(Step 44): the rollback alone only restores the code; the
+database stays migrated, and the old code cannot read it. (M5
+said M4 code runs fine on a migrated table — the opposite is
+true here.)
+
+**Undo:** Step 47 and Step 44 together.
+
 ### Step 48 — Full uninstall (removes only Roundtable's things)
 
 Run these in order. **Back up the database first (Step 43)** — after

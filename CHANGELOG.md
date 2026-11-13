@@ -65,9 +65,14 @@ Owner deploys after the audit.
   leader asking for it gets a clear error) — the task says the
   filter is "for workers", and a leader cannot claim anything, so
   returning an empty list would hide a misuse. No DEPLOY.md
-  "Updating to M7" section was added: the migration runs on first
-  start like M5/M6, and the update procedure is the existing Step
-  46 with the audited commit (the Owner deploys after the audit).
+  "Updating to M7" section was added at first: the migration runs
+  on first start like M5/M6, and the update procedure is the
+  existing Step 46 with the audited commit. The Auditor's R1
+  (AUDIT-M7.md) corrected that: M6 code cannot run on a migrated
+  database, so a rollback (Step 47) without a backup restore
+  (Step 44) leaves the board broken — the section is now added,
+  with the rollback trap stated plainly, and a guard test
+  (`test_m7_updating_section`) pins it.
 - **Open questions.** M8 (the leader working in emergencies) and
   M9 (subtasks) come later, after their own decisions; not started.
 
