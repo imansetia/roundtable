@@ -48,6 +48,17 @@ repeatable procedure.
 Docs, scripts and deploy templates only. No server behaviour
 change.
 
+Audit (AUDIT-M8.md, ZCode, 2026-11-14): PASS WITH REQUIRED
+FIXES. R1: the opencode section was out of date with opencode's
+current docs — reworked to the documented shape (servers under
+`mcp.servers`, file `opencode.jsonc`, global route `opencode
+mcp add --global`); the `{env:}` substitution, the `opencode
+mcp list` check and the env-var-over-file advice were already
+correct and are kept. R2 (Owner's choice, 2026-11-14): the
+deployment-shapes + local quick-start addendum is included in
+M8 instead of leading M10. AUDIT-M8.md added to `docs/audits/`
+unchanged. Full suite: 145 passed (11 M8 tests).
+
 ## M7 notes (N1–N2) (2026-11-14)
 
 M7 is deployed on HermesVM (a58d786; AUDIT-M7-FIXES.md PASS) and

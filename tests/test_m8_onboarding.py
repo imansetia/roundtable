@@ -66,7 +66,7 @@ def test_add_agent_runbook_covers_the_steps():
     assert "Clear all" in ADD_AGENT
     assert "mcpServers" in ADD_AGENT  # generic MCP client shape
     assert "opencode" in ADD_AGENT_FLAT
-    assert "opencode.json" in ADD_AGENT
+    assert "opencode.jsonc" in ADD_AGENT
     assert "worker.py" in ADD_AGENT
     assert "API-only" in ADD_AGENT_FLAT
 
@@ -79,6 +79,32 @@ def test_add_agent_no_literal_token():
     assert not re.search(r"Bearer [A-Za-z0-9_\-]{20,}", ADD_AGENT)
     assert "Bearer ${ROUNDTABLE_TOKEN}" in ADD_AGENT
     assert "Bearer <" in ADD_AGENT
+
+
+def test_add_agent_opencode_matches_current_docs():
+    # AUDIT-M8 R1: the old section nested the server directly under
+    # "mcp" and called the file opencode.json. Current docs
+    # (opencode.ai/docs/mcp-servers, checked 2026-11-14) put servers
+    # under "mcp.servers", the file is opencode.jsonc, and the global
+    # route is "opencode mcp add --global". The {env:} substitution
+    # and the "opencode mcp list" check were already right.
+    assert '"mcp": {"servers": {"roundtable"' in ADD_AGENT
+    assert '"mcp": {"roundtable"' not in ADD_AGENT
+    assert "opencode.jsonc" in ADD_AGENT
+    assert "opencode mcp add --global" in ADD_AGENT
+    assert "opencode mcp list" in ADD_AGENT
+    assert "{env:ROUNDTABLE_TOKEN}" in ADD_AGENT
+
+
+def test_add_agent_deployment_shapes_and_quick_start():
+    # AUDIT-M8 R2 (Owner's choice): the deployment-shapes +
+    # local quick-start addendum is part of M8.
+    assert "Deployment shapes" in ADD_AGENT
+    assert "local laptop" in ADD_AGENT_FLAT
+    assert "own VM" in ADD_AGENT_FLAT
+    assert "hosted public" in ADD_AGENT_FLAT
+    assert "agents.example.json" in ADD_AGENT
+    assert "python -m roundtable" in ADD_AGENT
 
 
 def test_deploy_part0_getting_connected():
@@ -153,5 +179,5 @@ def test_m8_scope_is_docs_scripts_templates_only():
 
 def test_readme_status_m8():
     assert "M8 in progress" in README
-    assert "143 tests pass" in README
-    assert "9 M8 onboarding" in README
+    assert "145 tests pass" in README
+    assert "11 M8 onboarding" in README
