@@ -182,5 +182,5 @@ def test_readme_status_m8():
     # status line moved on with M9 and M10. The count and the
     # breakdown entry still pin the M8 contribution.
     assert "M8 merged" in README
-    assert "197 tests pass" in README
+    assert "198 tests pass" in README
     assert "11 M8 onboarding" in README

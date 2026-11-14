@@ -181,7 +181,19 @@ def test_readme_landing_pitch():
     assert "shared task board" in README
     assert "Install it in one line" in README
     assert "pip install roundtable-mcp" in README
-    assert "uvx roundtable-mcp" in README
+    # R1: the bare `uvx roundtable-mcp` form only prints usage
+    # (the console script takes a subcommand) — the working form
+    # names the script after --from.
+    assert "uvx --from roundtable-mcp roundtable init" in README
+    assert "uvx --from roundtable-mcp roundtable run" in README
+
+
+def test_no_bare_uvx_form():
+    # R1 regression guard: the bare form must not appear anywhere
+    # a stranger would copy it from.
+    assert "uvx roundtable-mcp" not in README
+    assert "uvx roundtable-mcp" not in QUICKSTART
+    assert "uvx roundtable-mcp" not in CHANGELOG
 
 
 def test_readme_client_snippets():
@@ -209,8 +221,8 @@ def test_readme_links_walkthrough_and_tools():
 
 def test_readme_status_m11():
     assert "M11 in progress" in README
-    assert "197 tests pass" in README
-    assert "18 M11 publication" in README
+    assert "198 tests pass" in README
+    assert "19 M11 publication" in README
 
 
 # --- QUICKSTART, CI, SPEC, CHANGELOG ----------------------------------------

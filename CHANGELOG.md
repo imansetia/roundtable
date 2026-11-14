@@ -25,8 +25,8 @@ any agent); this milestone prepares everything up to the upload.
   around what already exists (`roundtable.cli` delegates to
   `roundtable.server.main`).
 - **README as landing page** — a 3-sentence pitch at the top;
-  one-line install (`pip install roundtable-mcp` / `uvx
-  roundtable-mcp`); copy-paste config snippets for Claude Code,
+  one-line install (`pip install roundtable-mcp`, or `uvx
+  --from roundtable-mcp roundtable` without installing); copy-paste config snippets for Claude Code,
   ZCode, opencode, Cursor and VS Code (each shape checked
   against the client's current docs — Claude Code's `claude mcp
   add --transport http`, Cursor's `.cursor/mcp.json` with

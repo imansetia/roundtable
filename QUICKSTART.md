@@ -9,7 +9,8 @@ submits it, the leader reviews it.
 ```bash
 pip install roundtable-mcp
 # or, without installing anything:
-uvx roundtable-mcp
+uvx --from roundtable-mcp roundtable init
+uvx --from roundtable-mcp roundtable run
 ```
 
 Requires Python 3.11 or newer.
