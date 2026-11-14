@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roundtable-mcp"
 version = "0.2.1"
-description = "Shared task board that lets AI agents from different vendors work together over MCP"
+description = "Self-hosted shared task board for AI agents — claim work, submit results over MCP. Private by design."
+keywords = ["mcp", "ai-agents", "task-board", "multi-agent", "coordination", "llm"]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"

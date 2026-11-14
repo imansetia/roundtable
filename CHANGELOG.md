@@ -2,6 +2,26 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## 0.2.1: metadata & discoverability (2026-11-14)
+
+Owner decision, 2026-11-14. Metadata only — no code change, no
+behaviour change, no dependency change. **Tag: v0.2.1.** PyPI upload
+itself is an OWNER-ONLY step after the audit.
+
+- **Keywords** — `keywords = ["mcp", "ai-agents", "task-board",
+  "multi-agent", "coordination", "llm"]` in pyproject, so the
+  package is found by what it is, not only by its name.
+- **Summary** — the one-line description now says what makes us
+  different: "Self-hosted shared task board for AI agents — claim
+  work, submit results over MCP. Private by design." (101
+  characters, under PyPI's display limit).
+- **README** — one pitch line after the opening pitch:
+  "Roundtable is a shared task board your agents claim work from
+  — self-hosted and private by design."
+
+Context: a different, unrelated project named roundtable-ai exists
+in the same search neighbourhood. We keep the name roundtable-mcp
+and differentiate through metadata instead of renaming.
 ## 0.2.1: republish with the corrected README (2026-11-14)
 
 Owner decision, 2026-11-14. The 0.2.0 files on PyPI were uploaded

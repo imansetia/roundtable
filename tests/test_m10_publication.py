@@ -590,7 +590,7 @@ def test_readme_public_status_section():
     assert "aggregates only" in README.lower()
     assert "Host policy" in README
     assert "M10 merged" in README
-    assert "199 tests pass" in README
+    assert "200 tests pass" in README
     assert "22 M10 publication" in README
 
 
