@@ -82,6 +82,13 @@ RESULT_MAX = 20_000
 REVIEW_NOTE_MAX = 4_000  # see module docstring (deviation, in CHANGELOG.md)
 REQUIRED_SKILL_MAX = 100  # AUDIT R4: was uncapped (per skill, M7)
 REQUIRED_SKILLS_MAX = 10  # M7: at most 10 required skills per task
+# M13: the effort hint on create_task (a hint for the model and
+# reasoning level a worker picks - the server cannot choose or
+# verify the model).
+EFFORT_LEVELS = ("low", "medium", "high")
+# M13: the self-reported model note on submit_result (max 100
+# chars, like the agents.json model note).
+MODEL_USED_MAX = 100
 ASSIGNEE_FILTER_MAX = 100  # AUDIT R4: assignee filter in list_tasks
 LIST_LIMIT_DEFAULT = 50
 LIST_LIMIT_MAX = 100
@@ -167,11 +174,16 @@ class Board:
         with self._lock:
             for agent in agents:
                 conn.execute(
-                    "INSERT INTO agents (name, role, skills, last_seen, active) "
-                    "VALUES (?, ?, ?, NULL, 1) "
+                    "INSERT INTO agents (name, role, skills, model, "
+                    "last_seen, active) VALUES (?, ?, ?, ?, NULL, 1) "
                     "ON CONFLICT(name) DO UPDATE SET role=excluded.role, "
-                    "skills=excluded.skills, active=1",
-                    (agent.name, agent.role, skills_to_json(agent.skills)),
+                    "skills=excluded.skills, model=excluded.model, active=1",
+                    (
+                        agent.name,
+                        agent.role,
+                        skills_to_json(agent.skills),
+                        agent.model,
+                    ),
                 )
             # Agents removed from the config stop being listed (AUDIT R3):
             # mark them inactive, and return their claimed tasks to open
@@ -222,6 +234,10 @@ class Board:
             "assignee": row["assignee"],
             "result": row["result"],
             "review_note": row["review_note"],
+            # M13: an optional hint for the model and reasoning level
+            # a worker picks. NULL when the task needs no particular
+            # effort.
+            "effort": row["effort"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
@@ -284,6 +300,9 @@ class Board:
                 "task_id": r["task_id"],
                 "author": r["author"],
                 "result": r["result"],
+                # M13: self-reported by the submitting agent; the
+                # server cannot verify it.
+                "model_used": r["model_used"],
                 "created_at": r["created_at"],
             }
             for r in rows
@@ -422,7 +441,13 @@ class Board:
 
     # -- tools: identity ----------------------------------------------------
     def whoami(self, agent: Agent) -> dict:
-        return {"name": agent.name, "role": agent.role, "skills": agent.skills}
+        # M13: the model note is information only, from agents.json.
+        return {
+            "name": agent.name,
+            "role": agent.role,
+            "skills": agent.skills,
+            "model": agent.model,
+        }
 
     def list_agents(self, agent: Agent) -> dict:
         with self._lock:
@@ -435,6 +460,8 @@ class Board:
                     "name": r["name"],
                     "role": r["role"],
                     "skills": skills_from_json(r["skills"]),
+                    # M13: an information-only note from agents.json.
+                    "model": r["model"],
                     "last_seen": r["last_seen"],
                 }
                 for r in rows
@@ -469,6 +496,7 @@ class Board:
         required_skill: str | None = None,
         required_skills: list[str] | None = None,
         assignee: str | None = None,
+        effort: str | None = None,
     ) -> dict:
         self._require_leader(agent)
         title = (title or "").strip()
@@ -477,6 +505,15 @@ class Board:
         _check_size("title", title, TITLE_MAX)
         _check_size("description", description or "", DESCRIPTION_MAX)
         skills = self._normalize_required_skills(required_skill, required_skills)
+        # M13: an optional effort hint (low/medium/high) telling the
+        # worker what model and reasoning level to fit. NULL when
+        # omitted - a task anyone can do.
+        if effort is not None:
+            if effort not in EFFORT_LEVELS:
+                raise RoundtableError(
+                    f"effort must be one of {', '.join(EFFORT_LEVELS)} "
+                    f"(got {effort!r})"
+                )
         if assignee is not None:
             target = self._agents.get(assignee)
             if target is None:
@@ -498,14 +535,15 @@ class Board:
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO tasks (title, description, required_skills, "
-                "status, created_by, assignee, created_at, updated_at) "
-                "VALUES (?, ?, ?, 'open', ?, ?, ?, ?)",
+                "status, created_by, assignee, effort, created_at, "
+                "updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)",
                 (
                     title,
                     description or "",
                     skills_to_json(skills),
                     agent.name,
                     assignee,
+                    effort,
                     now,
                     now,
                 ),
@@ -798,10 +836,21 @@ class Board:
             "created_at": row["created_at"],
         }
 
-    def submit_result(self, agent: Agent, task_id: int, result: str) -> dict:
+    def submit_result(
+        self,
+        agent: Agent,
+        task_id: int,
+        result: str,
+        model_used: str | None = None,
+    ) -> dict:
         _check_size("result", result or "", RESULT_MAX)
         if not (result or "").strip():
             raise RoundtableError("result must not be empty")
+        # M13: an optional self-reported note about the model that
+        # produced the result. The server cannot verify it; it is
+        # recorded for the record only and never used in any
+        # permission check.
+        _check_size("model_used", model_used or "", MODEL_USED_MAX)
         with self._lock:
             row = self._get_task_row(task_id)
             if row["status"] != "claimed":
@@ -825,8 +874,8 @@ class Board:
             # submission. tasks.result keeps its meaning (the latest).
             self._conn.execute(
                 "INSERT INTO submissions (task_id, author, result, "
-                "created_at) VALUES (?, ?, ?, ?)",
-                (task_id, agent.name, result, _now()),
+                "model_used, created_at) VALUES (?, ?, ?, ?, ?)",
+                (task_id, agent.name, result, model_used, _now()),
             )
             self._conn.commit()
             return self._task_dict(self._get_task_row(task_id))
