@@ -2,6 +2,29 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## 0.2.1: republish with the corrected README (2026-11-14)
+
+Owner decision, 2026-11-14. The 0.2.0 files on PyPI were uploaded
+from the pre-R1 tree, so their long description still showed the
+bare uvx form (the package name used as the command, which only
+prints usage) and "197 tests pass", while merged main already had
+the corrected `uvx --from roundtable-mcp roundtable` form and
+198 tests. **Tag: v0.2.1.** PyPI upload itself is an OWNER-ONLY step (PyPI forbids
+re-uploading the 0.2.0 files, so the fix needs a new version).
+
+- **Version** — 0.2.0 → **0.2.1** in pyproject and
+  `roundtable.__version__` (so `GET /status` reports 0.2.1).
+- **Docs** — README status line records the release; the
+  `/status` example shows 0.2.1; SPEC §9 gains test 25 and §10
+  gains the 0.2.1 line.
+- **Guard** — one new test pins the patch: the versions agree,
+  the CHANGELOG has the 0.2.1 entry, and the README install
+  section uses the `uvx --from` form.
+
+No changes to tool behaviour or schema; the server's core logic
+untouched. The 0.2.0 wheel's code is identical to 0.2.1's — only
+the version string, the docs and one test differ.
+
 ## M11: publish as a public MCP (2026-11-14)
 
 Owner decision, 2026-11-14. Anyone can now install Roundtable
