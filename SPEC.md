@@ -156,6 +156,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 22. (M7) `worker.py` claims only what the server allows (`claimable_by_me`), including a multi-skill task it only partly matches.
 23. (M10) GET /status returns the right counts and no board content; repeated calls from one IP hit the rate limit; /status writes no audit row.
 24. (M11) `roundtable init` writes agents.json with fresh tokens (mode 600) and never overwrites an existing file; `roundtable run` starts the board; the package installs as roundtable-mcp 0.2.0.
+25. (0.2.1) The package version is 0.2.1 in pyproject and in roundtable.__version__; GET /status reports 0.2.1; the README install section uses the `uvx --from roundtable-mcp roundtable` form (the bare form only prints usage).
 
 ## 10. Milestones
 
@@ -170,6 +171,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M9** — Operations & data safety: automatic daily backup with retention and a disk guard (Owner decision, 2026-11-14). -> Auditor review.
 - **M10** — Publication: self-host packaging and a read-only public status page (Owner decision, 2026-11-14). -> Auditor review.
 - **M11** — Publish as a public MCP: the package installs as roundtable-mcp 0.2.0, with a CLI, a landing-page README and CI (Owner decision, 2026-11-14). -> Auditor review.
+- **0.2.1** — Patch release: republish roundtable-mcp 0.2.1 with the merged README (the 0.2.0 PyPI long description was built from the pre-R1 tree). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.
 

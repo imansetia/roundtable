@@ -58,10 +58,13 @@ def test_pyproject_distribution_name():
 
 
 def test_pyproject_version_matches_package():
-    assert PYPROJECT["project"]["version"] == "0.2.0"
+    # 0.2.1 patch: the version moved, but pyproject and the package
+    # must always agree (the 0.2.0 PyPI upload shipped a stale README
+    # because the built files came from an older tree).
+    assert PYPROJECT["project"]["version"] == "0.2.1"
     import roundtable
 
-    assert roundtable.__version__ == "0.2.0"
+    assert roundtable.__version__ == "0.2.1"
 
 
 def test_pyproject_license_python_classifiers():
@@ -168,7 +171,7 @@ def test_cli_run_starts_board(tmp_path):
         ) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
-        assert body["version"] == "0.2.0"
+        assert body["version"] == "0.2.1"
     finally:
         proc.send_signal(signal.SIGTERM)
         proc.wait(timeout=10)
@@ -220,8 +223,8 @@ def test_readme_links_walkthrough_and_tools():
 
 
 def test_readme_status_m11():
-    assert "M11 in progress" in README
-    assert "198 tests pass" in README
+    assert "M11 merged" in README
+    assert "199 tests pass" in README
     assert "19 M11 publication" in README
 
 
