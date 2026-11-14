@@ -178,6 +178,9 @@ def test_m8_scope_is_docs_scripts_templates_only():
 
 
 def test_readme_status_m8():
-    assert "M8 in progress" in README
-    assert "145 tests pass" in README
+    # M8 is merged (PR #6 + the AUDIT-M8-FIXES notes PR #7); the
+    # status line moved on with M9. The count and the breakdown
+    # entry still pin the M8 contribution.
+    assert "M8 merged" in README
+    assert "157 tests pass" in README
     assert "11 M8 onboarding" in README

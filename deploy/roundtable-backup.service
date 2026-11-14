@@ -1,0 +1,64 @@
+# Roundtable daily backup service (M9). Started by
+# roundtable-backup.timer (daily, Persistent). Install with:
+#   sudo cp deploy/roundtable-backup.sh /srv/roundtable/backup.sh
+#   sudo chown roundtable:roundtable /srv/roundtable/backup.sh
+#   sudo chmod 750 /srv/roundtable/backup.sh
+#   sudo cp deploy/roundtable-backup.service /etc/systemd/system/roundtable-backup.service
+#   sudo cp deploy/roundtable-backup.timer /etc/systemd/system/roundtable-backup.timer
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now roundtable-backup.timer
+# Every directive is explained in docs/DEPLOY.md, section
+# "Backups now run automatically". Nothing here touches Hermes
+# or any other service on the machine.
+
+[Unit]
+Description=Roundtable daily backup
+Documentation=https://github.com/imansetia/roundtable/blob/main/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=roundtable
+Group=roundtable
+# The script runs DEPLOY.md Step 43's sqlite3 .backup as this
+# user, into /srv/roundtable/backups, mode 600. It carries its
+# own disk guard and retention; see the script header.
+ExecStart=/srv/roundtable/backup.sh
+# Files the service creates (the backup) are owner-only.
+UMask=0077
+# No [Install] section on purpose: the timer starts this
+# service. With an Install section pointing at the default
+# target it would also run once at every boot, on top of the
+# timer.
+
+# --- Memory safety (the VM has ~836 MiB total, ~278 MiB free) -----------
+# Same shape as the board and the worker: cap the backup job so
+# it cannot eat RAM Hermes needs. sqlite3 on this database uses
+# tens of MiB; 128 MiB is about 3x headroom. If the kernel runs
+# out of RAM, prefer killing this job (600) over the board (500)
+# and Hermes (0) — a backup can always run again tomorrow.
+MemoryAccounting=true
+MemoryMax=128M
+MemorySwapMax=0
+OOMScoreAdjust=600
+
+# --- Sandboxing -----------------------------------------------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/srv/roundtable/backups
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelLogs=true
+LockPersonality=true
+RemoveIPC=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

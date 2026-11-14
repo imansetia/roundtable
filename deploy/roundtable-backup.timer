@@ -1,0 +1,20 @@
+# Roundtable daily backup timer (M9). Fires once a day at
+# midnight; Persistent=true means a missed run (the VM was off
+# at midnight) catches up on the next boot instead of being
+# skipped. Install with:
+#   sudo cp deploy/roundtable-backup.timer /etc/systemd/system/roundtable-backup.timer
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now roundtable-backup.timer
+# See docs/DEPLOY.md, section "Backups now run automatically".
+
+[Unit]
+Description=Daily Roundtable backup
+Documentation=https://github.com/imansetia/roundtable/blob/main/docs/DEPLOY.md
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=roundtable-backup.service
+
+[Install]
+WantedBy=timers.target
