@@ -253,6 +253,9 @@ def test_m9_scope_guard():
 
 
 def test_readme_status_m9():
-    assert "M9 in progress" in README
-    assert "157 tests pass" in README
+    # M9 is merged (PR #8 + the AUDIT-M9 notes PR #9); the status
+    # line moved on with M10. The count and the breakdown entry
+    # still pin the M9 contribution.
+    assert "M9 merged" in README
+    assert "176 tests pass" in README
     assert "12 M9 backup" in README

@@ -118,6 +118,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 8. A worker cannot read tokens, change roles, edit another agent's messages, or modify the audit log. No tool reads the audit log, and no tool updates or deletes history rows (submissions, review messages, audit rows) — history is append-only and is read on the VM only.
 9. Call history: every tool call leaves one audit row with the call's arguments as JSON and, on error, the error message. The caller's identity stays from the token; no token or Authorization header is ever stored. At most 64 KB of arguments per row; a larger payload is stored cut, with a marker naming the original size in bytes. That truncation applies only to this log; board data is still rejected, not truncated. Arguments are logged from each tool's declared parameters; extra arguments an agent sends that the SDK drops (e.g. `decision` on `post_message`) are not recorded (N2). F1: a rate-limited call stores no arguments, only a marker `{"omitted": "rate_limited", "original_bytes": N}`; a call rejected for size keeps a short prefix (2 KB) plus the marker. F2: a configurable history cap, `ROUNDTABLE_HISTORY_MAX_MB` (default 1024), bounds the audit log's stored arguments; above it, rows keep agent, tool, task, outcome and error but store a marker `{"omitted": "history_cap"}` instead of arguments, and the server logs a warning once. Tools never fail because of the cap.
 10. Calls the MCP SDK rejects before the audit wrapper — missing or wrong-typed arguments — leave no audit row. The audit log covers only calls that reach the wrapper. (N1: a pre-existing gap since M1; covering them needs an SDK-level hook.)
+11. **Public status page (`GET /status`, M10).** Unauthenticated and read-only: it returns aggregates only — board name and version, task counts by status, the active agent count, and the server time. It never returns a title, description, result, message, or anything derived from board content, and it writes no audit row (the audit log covers tool calls). It is rate-limited per client IP at the same per-minute limit as tool calls (item 3); behind a reverse proxy the limit keys on the first X-Forwarded-For entry only when the direct peer is loopback, otherwise on the peer itself (a direct client can forge the header). The /mcp bearer gate is untouched: the status page never accepts a token and never grants board access.
 
 ## 8. Worker script (for API-only models)
 
@@ -153,6 +154,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 20. (M7) The old `required_skill` argument still works: it means a one-item list, and task output carries both forms.
 21. (M7) Migration of an M6 database keeps all tasks: a set `required_skill` becomes a one-item list, an unset one becomes [].
 22. (M7) `worker.py` claims only what the server allows (`claimable_by_me`), including a multi-skill task it only partly matches.
+23. (M10) GET /status returns the right counts and no board content; repeated calls from one IP hit the rate limit; /status writes no audit row.
 
 ## 10. Milestones
 
@@ -165,6 +167,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M7** — Skills are enforced on the server (Owner decision, 2026-11-13). -> Auditor review.
 - **M8** — Onboarding & operations: adding an agent is a documented runbook (Owner decision, 2026-11-14). -> Auditor review.
 - **M9** — Operations & data safety: automatic daily backup with retention and a disk guard (Owner decision, 2026-11-14). -> Auditor review.
+- **M10** — Publication: self-host packaging and a read-only public status page (Owner decision, 2026-11-14). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.
 

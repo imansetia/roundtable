@@ -1200,7 +1200,7 @@ curl -s -o /dev/null -w "%{http_code}\n" https://"$PUBLIC_NAME"/anything-else
 curl -s -o /dev/null -w "%{http_code} %{redirect_url}\n" http://"$PUBLIC_NAME"/
 ```
 
-The first must print `404` (only `/mcp` is exposed) and the second
+The first must print `404` (only `/mcp` and `/status` are exposed) and the second
 `301 https://<your name>/` (plain HTTP redirects to HTTPS).
 
 **Undo:** nothing to undo (read-only check).
@@ -1680,6 +1680,42 @@ true here.)
 
 **Undo:** Step 47 and Step 44 together.
 
+### Updating to M10
+
+M10 adds a public status page (`GET /status`, aggregates only)
+and exposes it through nginx next to `/mcp`. No database schema
+change: the update is the normal one, plus a reinstall of the
+nginx site (the new `roundtable.conf` carries the `/status`
+location):
+
+1. **Back up the database first (Step 43).** Do not skip this.
+2. **Record the current version (Step 45)**, then set
+   `$AUDITED_COMMIT` to the hash the Auditor gives you for M10
+   and run **Step 46** (fetch, check out, reinstall, restart
+   Roundtable only). Nothing else is restarted — Hermes, nginx
+   and certbot are untouched.
+3. **Reinstall the nginx site** (Step 37's commands, with the
+   new file):
+
+   ```bash
+   sudo cp /srv/roundtable/app/deploy/nginx/roundtable.conf /etc/nginx/sites-available/roundtable
+   sudo sed -i "s/roundtable.example.com/$PUBLIC_NAME/" /etc/nginx/sites-available/roundtable
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+   (The site was already installed in Step 37; this replaces it
+   with the version that also exposes `/status`.)
+4. **Verify:** Step 24 (local 401 check) and Step 41
+   (authenticated check through nginx) must pass, and Part 11
+   item 13 (the status page) must return 200 with aggregates
+   only. Then reconnect both apps (the restart drops the
+   leader's MCP connection; see the M7 section above).
+
+**Undo:** Step 47 (roll back the code) and, for nginx, reinstall
+the previous site file the same way and reload. No database
+restore is needed for this update: nothing in M10 changes the
+schema, so the old code runs fine on the database.
+
 ### Step 48 — Full uninstall (removes only Roundtable's things)
 
 Run these in order. **Back up the database first (Step 43)** — after
@@ -1803,7 +1839,7 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST https://$PUBLIC_NAME/mcp -H "Co
 #    that exists only on the VM, so it cannot run from outside.
 #    Expected: 400, not 421 (see Step 41).
 
-# 9. Any other path -> 404 (only /mcp is exposed).
+# 9. Any other path -> 404 (only /mcp and /status are exposed).
 curl -s -o /dev/null -w "%{http_code}\n" https://$PUBLIC_NAME/
 curl -s -o /dev/null -w "%{http_code}\n" https://$PUBLIC_NAME/anything
 #    Expected: 404, 404
@@ -1820,6 +1856,13 @@ echo | openssl s_client -connect $PUBLIC_NAME:443 -servername $PUBLIC_NAME 2>/de
 # 12. Port 8000 is not reachable from outside.
 curl --connect-timeout 5 -s -o /dev/null -w "%{http_code}\n" http://$PUBLIC_NAME:8000/mcp || echo "connection refused/timed out (expected)"
 #    Expected: connection refused or timeout — never a 401 or 200.
+
+# 13. Public status page -> 200 with aggregates only (M10).
+curl -s https://$PUBLIC_NAME/status
+#    Expected: 200 and a JSON object with only "ok", "board",
+#    "version", "tasks_by_status", "active_agents" and
+#    "server_time" — no title, description, result or message.
+#    And without a token: the page is public (no 401).
 ```
 
 ### Rate limiting is unchanged
@@ -1827,7 +1870,9 @@ curl --connect-timeout 5 -s -o /dev/null -w "%{http_code}\n" http://$PUBLIC_NAME
 nginx only forwards the request, including the `Authorization` header,
 unchanged. The server still limits **per token** (60 tool calls/minute
 per token, counted on tool calls only — see SPEC.md section 7.3 and
-`roundtable/server.py`). nginx's per-IP limit (`limit_req`, 10 req/s
+`roundtable/server.py`). The public status page has its own limit:
+60 requests/minute **per IP** (same number; behind nginx it keys on
+`X-Forwarded-For`). nginx's per-IP limit (`limit_req`, 10 req/s
 per IP, burst 20) is a second, coarser layer: it can only trigger on
 floods, far above the per-token limit. To verify the per-token limit
 still works, run the repository's own test suite (`pytest tests/`) —
