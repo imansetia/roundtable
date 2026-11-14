@@ -43,6 +43,18 @@ since M7 (the /status route only). No database schema change; no
 new token type; /mcp's bearer gate untouched; worker service
 untouched; board content never leaves the bearer gate.
 
+- **Audit fixes (AUDIT-M10.md, 2026-11-14):** R1 — `GET /status`
+  had no Host-header (DNS-rebinding) protection: the SDK applies
+  its transport security inside the `/mcp` handler only, so a
+  malicious webpage could rebind a domain to 127.0.0.1:8000 on a
+  Shape A install and read the aggregates. The handler now
+  validates Host (loopback hosts plus `ROUNDTABLE_ALLOWED_HOSTS`;
+  anything else → 404 with no detail), with tests that a forged
+  Host is rejected and an allowed host is accepted, and a line in
+  SPEC §7 item 11. R2 — `/status` gets its own nginx rate-limit
+  zone (20 r/s) so a flood on the unauthenticated page cannot
+  crowd out `/mcp` traffic.
+
 ## M9: operations & data safety (2026-11-14)
 
 Owner decision, 2026-11-14. The board's data depended on the

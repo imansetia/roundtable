@@ -346,6 +346,70 @@ def test_status_uses_forwarded_ip_behind_a_proxy(tmp_path):
         stop_server(proc)
 
 
+def test_status_rejects_forged_host(tmp_path):
+    # R1: a forged Host is answered 404 with no detail, before the
+    # aggregates — a malicious webpage that rebinds a domain to
+    # 127.0.0.1:8000 must not be able to read the board's private
+    # aggregates. The bound host and localhost still work.
+    proc, mcp_url, db_path = start_server(tmp_path, free_port())
+    try:
+        port = mcp_url.split(":")[-1].split("/")[0]
+        with httpx.Client(trust_env=False, timeout=5) as http:
+            evil = http.get(
+                status_url(mcp_url), headers={"Host": "evil.example.com"}
+            )
+            assert evil.status_code == 404
+            assert "tasks_by_status" not in evil.text
+            lan = http.get(
+                status_url(mcp_url), headers={"Host": "192.168.1.1:8000"}
+            )
+            assert lan.status_code == 404
+            bound = http.get(
+                status_url(mcp_url),
+                headers={"Host": f"127.0.0.1:{port}"},
+            )
+            assert bound.status_code == 200
+            local = http.get(
+                status_url(mcp_url), headers={"Host": f"localhost:{port}"}
+            )
+            assert local.status_code == 200
+    finally:
+        stop_server(proc)
+
+
+def test_status_accepts_allowed_hosts(tmp_path):
+    # R1: when ROUNDTABLE_ALLOWED_HOSTS is set, those hosts are
+    # accepted on /status too; anything else is still rejected.
+    proc, mcp_url, db_path = start_server(
+        tmp_path,
+        free_port(),
+        extra_env={"ROUNDTABLE_ALLOWED_HOSTS": "example.com"},
+    )
+    try:
+        port = mcp_url.split(":")[-1].split("/")[0]
+        with httpx.Client(trust_env=False, timeout=5) as http:
+            named = http.get(
+                status_url(mcp_url), headers={"Host": "example.com"}
+            )
+            assert named.status_code == 200
+            with_port = http.get(
+                status_url(mcp_url),
+                headers={"Host": f"example.com:{port}"},
+            )
+            assert with_port.status_code == 200
+            evil = http.get(
+                status_url(mcp_url), headers={"Host": "evil.example.com"}
+            )
+            assert evil.status_code == 404
+            bound = http.get(
+                status_url(mcp_url),
+                headers={"Host": f"127.0.0.1:{port}"},
+            )
+            assert bound.status_code == 200
+    finally:
+        stop_server(proc)
+
+
 def test_status_writes_no_audit_row(tmp_path):
     proc, mcp_url, db_path = start_server(tmp_path, free_port())
     try:
@@ -475,6 +539,15 @@ def test_dockerignore():
         assert entry in DOCKERIGNORE
 
 
+def test_nginx_status_has_own_rate_limit_zone():
+    # R2: /status has its own nginx rate-limit zone, so a flood on
+    # the unauthenticated page cannot crowd out /mcp traffic in the
+    # shared zone.
+    assert "limit_req_zone $binary_remote_addr zone=status:10m rate=20r/s" in NGINX
+    assert NGINX.count("limit_req zone=mcp") == 1
+    assert NGINX.count("limit_req zone=status") == 1
+
+
 def test_nginx_exposes_status():
     assert "location = /status" in NGINX
     assert "proxy_pass http://127.0.0.1:8000" in NGINX
@@ -492,6 +565,9 @@ def test_deploy_status_verification():
     assert "Updating to M10" in DEPLOY
     assert "only /mcp is exposed" not in DEPLOY_FLAT
     assert "only /mcp and /status are exposed" in DEPLOY_FLAT
+    # The M9 backup timer and the M8 worker service are independent
+    # of this update — neither is installed nor changed here.
+    assert "independent of this update" in DEPLOY_FLAT
 
 
 def test_spec_status_rules():
@@ -501,6 +577,9 @@ def test_spec_status_rules():
     assert "aggregates only" in SPEC_FLAT
     assert "per client IP" in SPEC_FLAT
     assert "no audit row" in SPEC_FLAT
+    # R1: the endpoint applies the same Host policy as the transport.
+    assert "same Host policy as the transport" in SPEC_FLAT
+    assert "404 with no detail" in SPEC_FLAT
     assert "(M10)" in SPEC_FLAT
     assert "23. (M10)" in SPEC
 
@@ -509,9 +588,10 @@ def test_readme_public_status_section():
     assert "## Public status page" in README
     assert "GET /status" in README
     assert "aggregates only" in README.lower()
+    assert "Host policy" in README
     assert "M10 in progress" in README
-    assert "176 tests pass" in README
-    assert "19 M10 publication" in README
+    assert "179 tests pass" in README
+    assert "22 M10 publication" in README
 
 
 def test_changelog_m10():

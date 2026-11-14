@@ -1714,7 +1714,10 @@ location):
 **Undo:** Step 47 (roll back the code) and, for nginx, reinstall
 the previous site file the same way and reload. No database
 restore is needed for this update: nothing in M10 changes the
-schema, so the old code runs fine on the database.
+schema, so the old code runs fine on the database. The M9 backup
+timer and the M8 worker service are independent of this update:
+neither is installed nor changed here — if you have them, they
+keep running as before.
 
 ### Step 48 — Full uninstall (removes only Roundtable's things)
 
