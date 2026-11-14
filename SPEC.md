@@ -155,6 +155,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 21. (M7) Migration of an M6 database keeps all tasks: a set `required_skill` becomes a one-item list, an unset one becomes [].
 22. (M7) `worker.py` claims only what the server allows (`claimable_by_me`), including a multi-skill task it only partly matches.
 23. (M10) GET /status returns the right counts and no board content; repeated calls from one IP hit the rate limit; /status writes no audit row.
+24. (M11) `roundtable init` writes agents.json with fresh tokens (mode 600) and never overwrites an existing file; `roundtable run` starts the board; the package installs as roundtable-mcp 0.2.0.
 
 ## 10. Milestones
 
@@ -168,6 +169,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M8** — Onboarding & operations: adding an agent is a documented runbook (Owner decision, 2026-11-14). -> Auditor review.
 - **M9** — Operations & data safety: automatic daily backup with retention and a disk guard (Owner decision, 2026-11-14). -> Auditor review.
 - **M10** — Publication: self-host packaging and a read-only public status page (Owner decision, 2026-11-14). -> Auditor review.
+- **M11** — Publish as a public MCP: the package installs as roundtable-mcp 0.2.0, with a CLI, a landing-page README and CI (Owner decision, 2026-11-14). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.
 
