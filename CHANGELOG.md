@@ -2,6 +2,46 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M9: operations & data safety (2026-11-14)
+
+Owner decision, 2026-11-14. The board's data depended on the
+Owner remembering DEPLOY.md Step 43, and the disk Hermes shares
+had no guard against a runaway backup. From M9 the backup runs
+itself, and a backup can never be the thing that fills the disk.
+
+- **Automatic daily backup** — deploy templates
+  (`deploy/roundtable-backup.service`,
+  `deploy/roundtable-backup.timer`, `deploy/roundtable-backup.sh`).
+  The timer fires daily at midnight (`OnCalendar=daily`,
+  `Persistent=true`, so a missed run catches up on boot). The
+  service runs Step 43's command as the roundtable user
+  (`sqlite3 .backup` into `/srv/roundtable/backups`, mode 600).
+  The service has no `[Install]` section on purpose: the timer
+  starts it, and it must never also run at boot.
+- **Retention (Owner decision, 2026-11-14): keep 14 daily +
+  4 weekly backup files, delete older.** Precisely: the newest
+  14 daily files, plus the newest file of each of the last 4
+  ISO weeks; older `roundtable-YYYY-MM-DD.db` files are deleted.
+  Backup FILES only — history rows (`audit_log`, `submissions`,
+  `messages`) stay append-only and are NEVER touched by this;
+  backup retention is about backup files only.
+- **Disk guard:** before backing up, the script checks free
+  space on `/` and skips with a loud journal warning below 5 GB
+  free (DEPLOY.md's "act now" threshold). Fail safe: if
+  anything is wrong, nothing is deleted and the journal says
+  why.
+- **DEPLOY.md "Backups now run automatically"** — what runs
+  when, where files land, restore is still Step 44, how to
+  disable the timer, and the install steps. Step 43's "no
+  automatic schedule yet" sentence now points at the timer.
+- **Pruning history rows stays an open Owner decision** —
+  documented in DEPLOY.md (leave append-only, archive-then-
+  delete by hand, or delete by age by hand, always with a
+  backup first), not implemented.
+
+Docs, scripts and deploy templates only. No server behaviour
+change; the worker service is untouched; nothing touches Hermes.
+
 ## M8: onboarding & operations (2026-11-14)
 
 Owner decision, 2026-11-14. Adding a new agent was scattered

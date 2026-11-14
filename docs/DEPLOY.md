@@ -1279,8 +1279,9 @@ sudo -u roundtable ls -l /srv/roundtable/backups/
 (`.backup` reads a consistent snapshot — it is safe while the server
 is running; never copy the `.db` file with plain `cp` while the server
 writes to it). The backup is mode 600, in the backups directory. Run
-this whenever the board has work you would not want to lose; there is
-no automatic schedule yet (see Open questions in CHANGELOG.md).
+this whenever the board has work you would not want to lose. Since M9
+the timer in "Backups now run automatically" below runs this same
+command daily, so this step is the manual version.
 
 **Expected:** a line like
 `-rw------- 1 roundtable roundtable ... roundtable-2026-11-10.db`.
@@ -1334,6 +1335,95 @@ re-run Step 44 with a different backup file. If the restore made
 things worse and you have not deleted them yet, the moved-aside files
 are your way back: stop the service, move the `.before-restore` files
 back (dropping the suffix), and start it again.
+
+## Backups now run automatically (M9)
+
+The timer runs Step 43's backup once a day, so the board's data
+survives without the Owner remembering to act.
+
+**What runs when:** `roundtable-backup.timer` fires daily at
+midnight (`OnCalendar=daily`). `Persistent=true` means a missed
+run — the VM was off at midnight — catches up on the next boot
+instead of being skipped. The service runs
+`/srv/roundtable/backup.sh` as the `roundtable` user: it checks
+free space first, then runs Step 43's `sqlite3 .backup` into
+`/srv/roundtable/backups/roundtable-YYYY-MM-DD.db`, mode 600,
+then prunes old backup files (see below).
+
+**Disk guard:** before backing up, the script checks free space
+on `/`. Below 5 GB free — the "act now" threshold from the M6
+disk check — it skips the backup, deletes nothing, and writes a
+loud warning to the journal. A backup must never be the thing
+that fills the disk Hermes shares. If anything else is wrong
+(the database is missing or unreadable), the script fails,
+deletes nothing, and the journal says why.
+
+**Retention (backup FILES only):** keep the newest 14 daily
+files, plus the newest file of each of the last 4 ISO weeks;
+delete older `roundtable-YYYY-MM-DD.db` files. History rows
+(`audit_log`, `submissions`, `messages`) are append-only and are
+never touched by the backup — retention is about backup files
+only. Pruning history rows is still an open Owner decision (see
+below).
+
+**Where files land:** `/srv/roundtable/backups/`, one file per
+day, mode 600, owned by `roundtable`.
+
+**Restore is still Step 44** — unchanged. Pick the backup file
+you want by date and follow Step 44.
+
+**Install** (the timer is not installed by the M3 steps; add it
+now):
+
+```bash
+sudo cp /srv/roundtable/app/deploy/roundtable-backup.sh /srv/roundtable/backup.sh
+sudo chown roundtable:roundtable /srv/roundtable/backup.sh
+sudo chmod 750 /srv/roundtable/backup.sh
+sudo cp /srv/roundtable/app/deploy/roundtable-backup.service /etc/systemd/system/roundtable-backup.service
+sudo cp /srv/roundtable/app/deploy/roundtable-backup.timer /etc/systemd/system/roundtable-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now roundtable-backup.timer
+```
+
+(The `chmod 750` matters: files from GitHub arrive without the
+executable bit, so set it here. The script holds no secrets —
+only paths — so 750 is enough.)
+
+**Expected:** `systemctl list-timers roundtable-backup.timer`
+shows the timer with a next-run time (next midnight, or on boot
+if one was missed). Test it once now, without waiting for
+midnight:
+
+```bash
+sudo systemctl start roundtable-backup.service
+sudo -u roundtable ls -l /srv/roundtable/backups/
+sudo journalctl -u roundtable-backup --no-pager | tail -n 10
+```
+
+**Expected:** a new `roundtable-<today>.db`, mode 600, and a
+journal line `roundtable-backup: wrote /srv/roundtable/backups/roundtable-<today>.db`.
+
+**To disable the timer:**
+
+```bash
+sudo systemctl disable --now roundtable-backup.timer
+```
+
+(The service stays installed but never runs; backups go back to
+manual Step 43. Re-enable with `sudo systemctl enable --now
+roundtable-backup.timer`.)
+
+**What this does not do — pruning history rows:** the backup
+never deletes rows from `audit_log`, `submissions` or
+`messages`. If the database itself grows too large, the options
+are: (a) leave it append-only forever and rely on the disk
+check; (b) archive old rows to a separate file and delete them
+from the live database, by hand, with a backup taken first;
+(c) delete rows older than an agreed age (for example one year),
+again by hand with a backup first. No option is chosen yet —
+pruning stays an open Owner decision, and any pruning must
+never silently rewrite history: what the audit log says
+happened must stay true.
 
 ## Part 10 — Updating, rollback, uninstall
 
