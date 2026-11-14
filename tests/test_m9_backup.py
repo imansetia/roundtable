@@ -259,3 +259,58 @@ def test_readme_status_m9():
     assert "M9 merged" in README
     assert "200 tests pass" in README
     assert "12 M9 backup" in README
+
+
+def test_backup_copy_switches_out_of_wal_mode(tmp_path):
+    # Co-sign M12 follow-up: the .backup copy inherits the live
+    # database's WAL journal mode. The script switches the COPY to
+    # DELETE mode, so opening it later never leaves -wal/-shm
+    # sidecars in backups/ that retention could not prune.
+    db_path, backup_dir = _make_db(tmp_path)
+    # The live board runs in WAL mode, so the source database must be
+    # in WAL mode too — otherwise the copy is born in DELETE mode and
+    # the fix is untested (a DELETE-mode copy never grows sidecars).
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    conn.execute("INSERT INTO t (v) VALUES ('wal-mode row')")
+    conn.commit()
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    conn.close()
+    proc = _run(db_path, backup_dir)
+    assert proc.returncode == 0, proc.stderr
+    today = datetime.date.today().isoformat()
+    copy = backup_dir / f"roundtable-{today}.db"
+    check = sqlite3.connect(copy)
+    mode = check.execute("PRAGMA journal_mode").fetchone()[0]
+    check.close()
+    assert mode == "delete", mode
+    # And no -wal/-shm sidecars for the fresh copy: the switch to
+    # DELETE mode removed them.
+    assert not (backup_dir / f"roundtable-{today}.db-wal").exists()
+    assert not (backup_dir / f"roundtable-{today}.db-shm").exists()
+
+
+def test_backup_prunes_sidecars_of_pruned_backups(tmp_path):
+    # Retention removes the -wal/-shm sidecars of every backup file
+    # it prunes, so sidecars left by earlier opens cannot linger in
+    # backups/ past their file's retirement. A 40-day-old file sits
+    # beyond the 14-daily window and beyond the 4 weekly keeps, so
+    # the run deletes it and its sidecars.
+    db_path, backup_dir = _make_db(tmp_path)
+    # Files from the last ~18 days survive (14 daily + 4 weekly
+    # keeps); seed daily files out to 60 days so files beyond the
+    # weekly keeps are really pruned.
+    for days_back in range(14, 61):
+        day = datetime.date.today() - datetime.timedelta(days=days_back)
+        (backup_dir / f"roundtable-{day.isoformat()}.db").write_text(
+            "seed", encoding="utf-8"
+        )
+    old_day = datetime.date.today() - datetime.timedelta(days=55)
+    old = f"roundtable-{old_day.isoformat()}.db"
+    (backup_dir / f"{old}-wal").write_text("wal", encoding="utf-8")
+    (backup_dir / f"{old}-shm").write_text("shm", encoding="utf-8")
+    proc = _run(db_path, backup_dir)
+    assert proc.returncode == 0, proc.stderr
+    assert not (backup_dir / old).exists()
+    assert not Path(f"{backup_dir / old}-wal").exists()
+    assert not Path(f"{backup_dir / old}-shm").exists()

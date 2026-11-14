@@ -249,6 +249,24 @@ def test_ci_workflow():
     assert "pull_request" in CI
 
 
+def test_ci_workflow_permissions_and_pinned_actions():
+    # Co-sign N2: the workflow token is read-only, and the actions
+    # are pinned to commit SHAs (a tag is mutable; a SHA is not).
+    assert "permissions:" in CI
+    assert "contents: read" in CI
+    assert (
+        "uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        in CI
+    )
+    assert (
+        "uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+        in CI
+    )
+    # The mutable tag references are gone.
+    assert "actions/checkout@v4" not in CI
+    assert "actions/setup-python@v5" not in CI
+
+
 def test_spec_m11():
     assert "24. (M11)" in SPEC
     assert "(M11)" in SPEC
