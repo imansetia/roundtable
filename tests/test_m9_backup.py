@@ -257,5 +257,5 @@ def test_readme_status_m9():
     # line moved on with M10. The count and the breakdown entry
     # still pin the M9 contribution.
     assert "M9 merged" in README
-    assert "179 tests pass" in README
+    assert "198 tests pass" in README
     assert "12 M9 backup" in README

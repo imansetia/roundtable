@@ -2,6 +2,61 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M11: publish as a public MCP (2026-11-14)
+
+Owner decision, 2026-11-14. Anyone can now install Roundtable
+like an ecosystem MCP server — one line, zero guessing — and the
+README is the landing page. **Tag: v0.2.0.** PyPI upload itself is
+an OWNER-ONLY step after the audit (PyPI credentials never touch
+any agent); this milestone prepares everything up to the upload.
+
+- **Package identity** — the distribution is renamed
+  `roundtable-mcp` (name verified AVAILABLE on PyPI; plain
+  `roundtable` is taken). Version 0.1.0 → **0.2.0**. pyproject
+  metadata: description, license MIT, requires-python >= 3.11,
+  classifiers, long description from README, project URLs.
+- **CLI** — console entry points: `roundtable init` (a wizard
+  that generates agents.json with the Python token pattern —
+  never overwrites an existing file — and prints the exact
+  connection info for an MCP client, never echoing the tokens)
+  and `roundtable run` (starts the board; same defaults as
+  `python -m roundtable`). Bare `roundtable` with no subcommand
+  prints usage (use `roundtable run`). The CLI is a wrapper
+  around what already exists (`roundtable.cli` delegates to
+  `roundtable.server.main`).
+- **README as landing page** — a 3-sentence pitch at the top;
+  one-line install (`pip install roundtable-mcp`, or `uvx
+  --from roundtable-mcp roundtable` without installing); copy-paste config snippets for Claude Code,
+  ZCode, opencode, Cursor and VS Code (each shape checked
+  against the client's current docs — Claude Code's `claude mcp
+  add --transport http`, Cursor's `.cursor/mcp.json` with
+  `mcpServers` and `${env:}`, VS Code's `.vscode/mcp.json` with
+  `servers` and `${input:}`); links to the first-task
+  walkthrough and the tool list; badges (CI, license, Python
+  version).
+- **Docs restructure** — `QUICKSTART.md` is the front door
+  (install → `roundtable init` → connect a client → first task
+  in 5 minutes); ADD-AGENT / DEPLOY / CONNECT are the advanced
+  pages, linked.
+- **CI** — `.github/workflows/ci.yml`: ubuntu-latest, Python
+  3.12, install + full suite on every push/PR. The M9/M10 tests
+  run the real backup script and need the sqlite3 CLI, so the
+  workflow installs it if absent (GitHub's ubuntu image ships
+  it, but a missing CLI fails those tests).
+- **Release prep** — sdist + wheel build verified from the
+  release commit (entry points present, long description
+  checks); the Owner uploads to PyPI after the audit.
+
+**Parallel contribution:** the README landing copy was written
+in parallel with a separate English landing draft by Gemini
+Argon, arriving through the Owner — the draft will be
+incorporated if it improves the copy.
+
+No changes to tool behaviour or schema; the server's core logic
+untouched (the CLI is a wrapper around what already exists);
+worker service untouched; board content never leaves the bearer
+gate. Pruning history rows remains the open Owner decision.
+
 ## M10: publication (2026-11-14)
 
 Owner decision, 2026-11-14. A stranger could not try Roundtable
