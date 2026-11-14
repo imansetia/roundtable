@@ -73,9 +73,21 @@ SPEC_FLAT = flat(SPEC)
 
 
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    # In WSL2 mirrored networking, localhost is shared with Windows —
+    # a bind(0) pick can collide with a port a Windows-side process
+    # already holds (seen live: the Owner's PyPI-verification board
+    # on 8000). Verify the picked port is actually free before
+    # returning it.
+    for _ in range(10):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                continue  # something is listening there — pick another
+        except OSError:
+            return port
+    raise RuntimeError("no free port found in 10 tries")
 
 
 def start_server(
@@ -463,6 +475,17 @@ def test_install_local_script():
 
 
 def test_install_local_script_runs(tmp_path):
+    # Skip when something already listens on 127.0.0.1:8000 — e.g.
+    # the Owner's own PyPI-verification board — the script refuses
+    # to double-bind and this test cannot run next to it.
+    import socket as _socket
+    probe = _socket.socket()
+    try:
+        probe.bind(("127.0.0.1", 8000))
+    except OSError:
+        pytest.skip("127.0.0.1:8000 is occupied by another local board")
+    finally:
+        probe.close()
     # The real run, in a temp copy of the repo: the script sets up
     # a venv, installs, generates tokens, starts the board, verifies
     # it (401 + whoami + /status), and leaves it running. The test

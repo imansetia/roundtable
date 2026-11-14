@@ -56,9 +56,21 @@ M12_AGENTS = {
 
 
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    # In WSL2 mirrored networking, localhost is shared with Windows —
+    # a bind(0) pick can collide with a port a Windows-side process
+    # already holds (seen live: the Owner's PyPI-verification board
+    # on 8000). Verify the picked port is actually free before
+    # returning it.
+    for _ in range(10):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                continue  # something is listening there — pick another
+        except OSError:
+            return port
+    raise RuntimeError("no free port found in 10 tries")
 
 
 def start_server(tmp: Path, port: int, agents: dict = M12_AGENTS):
