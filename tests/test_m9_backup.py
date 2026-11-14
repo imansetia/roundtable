@@ -257,8 +257,8 @@ def test_readme_status_m9():
     # line moved on with M10. The count and the breakdown entry
     # still pin the M9 contribution.
     assert "M9 merged" in README
-    assert "200 tests pass" in README
-    assert "12 M9 backup" in README
+    assert "218 tests pass" in README
+    assert "14 M9 backup" in README
 
 
 def test_backup_copy_switches_out_of_wal_mode(tmp_path):

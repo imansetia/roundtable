@@ -2,6 +2,52 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## 0.3.0: the leader may work, only when needed (M12) (2026-11-15)
+
+Owner decision, 2026-11-15. Until now `claim_task` rejected every
+leader call outright, so a task nobody could do (no eligible
+worker, or one that bounced twice) sat open forever unless the
+Owner edited agents.json. And when the leader did work on a task,
+it reviewed its own submission. M12 fixes both, server-side.
+
+- **Leader-help claim rules** — `claim_task` by the leader is
+  allowed on an open, unassigned task when the leader holds every
+  required skill AND at least one rule holds: (a) a worker has
+  posted help_request on the task, (b) no active worker holds
+  every required skill (including when there are no active
+  workers), (c) the task has been released by workers or rejected
+  in review at least 2 times. All three are counted from history
+  (the audit log and the server-written review messages) — never
+  from a field an agent can set. Otherwise the claim is rejected
+  with an error naming the rules. The reason is recorded as a
+  server-written note in the task history, and the claim response
+  carries it as `leader_claim_reason`.
+- **Four-eyes on leader work** — when the leader submitted a
+  result, its own `review_task` is rejected: an active peer worker
+  (not the submitter) holding every required skill reviews
+  instead, with the same review-message history as M5. If none is
+  eligible, the task stays `submitted` and `get_task`/`list_tasks`
+  output says it waits for a peer reviewer (`peer_review` field).
+- **Workers unchanged** — workers still never review
+  worker-submitted tasks: only the leader does. The leader still
+  cannot be a direct assignee at `create_task`.
+- **Version** — 0.2.1 was never uploaded to PyPI (0.2.0 shipped,
+  then the 0.2.1 republish PR landed on main); this release is
+  **0.3.0** and carries the 0.2.1 metadata changes (keywords,
+  summary, pitch line) together with M12. SPEC section 9 item 25
+  now pins the pyproject/`__version__` sync instead of a specific
+  number.
+- **Tests** — 11 new acceptance tests (SPEC section 9, tests
+  26-36); existing M7/M11 tests unchanged except the version-sync
+  guards and the README test-count line.
+
+The co-sign notes N1-N5 (AUDIT-COSIGN-M7-M11) and the
+DEPLOY rename-uninstall steps shipped in the first commit of this
+branch.
+
+Deviations from SPEC.md: none - SPEC section 5/6/9/10 were updated
+with this milestone as the Owner's decision.
+
 ## 0.2.1: metadata & discoverability (2026-11-14)
 
 Owner decision, 2026-11-14. Metadata only — no code change, no

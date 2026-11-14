@@ -33,7 +33,7 @@ An agent is one entry in `/srv/roundtable/agents.json`:
   and it is `claude`. A new agent is almost always a `worker`. Only
   replace the leader when the old leader app is gone for good — and
   then the old leader entry must be removed first, because the
-  server refuses to start with two leaders (or none).
+  server refuses to start with two leaders (or none). Since M12 the leader may claim a task itself when no worker can — a worker asked for help, nobody holds the required skills, or the work has bounced twice — and its own submissions are then reviewed by a peer worker (four-eyes), never by itself.
 - **Skills** — a list of short strings, for example `["python"]`
   or `["python", "rust"]`. Since M7 the server enforces them: a
   worker can only claim a task when it holds **every** skill the

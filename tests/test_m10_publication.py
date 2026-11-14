@@ -221,7 +221,7 @@ def test_status_returns_aggregates_only(tmp_path):
         body = resp.json()
         assert body["ok"] is True
         assert body["board"] == "Roundtable"
-        assert body["version"] == "0.2.1"
+        assert body["version"] == "0.3.0"
         assert body["tasks_by_status"] == {
             "open": 1,
             "claimed": 1,
@@ -604,8 +604,8 @@ def test_readme_public_status_section():
     assert "aggregates only" in README.lower()
     assert "Host policy" in README
     assert "M10 merged" in README
-    assert "200 tests pass" in README
-    assert "22 M10 publication" in README
+    assert "218 tests pass" in README
+    assert "26 M10 publication" in README
 
 
 def test_changelog_m10():

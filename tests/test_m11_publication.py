@@ -60,10 +60,10 @@ def test_pyproject_distribution_name():
 def test_pyproject_version_matches_package():
     # 0.2.1: the version moved, but pyproject and the package
     # must always agree.
-    assert PYPROJECT["project"]["version"] == "0.2.1"
+    assert PYPROJECT["project"]["version"] == "0.3.0"
     import roundtable
 
-    assert roundtable.__version__ == "0.2.1"
+    assert roundtable.__version__ == "0.3.0"
 
 
 def test_pyproject_license_python_classifiers():
@@ -225,8 +225,8 @@ def test_readme_links_walkthrough_and_tools():
 
 def test_readme_status_m11():
     assert "M11 merged" in README
-    assert "200 tests pass" in README
-    assert "19 M11 publication" in README
+    assert "218 tests pass" in README
+    assert "20 M11 publication" in README
 
 
 # --- QUICKSTART, CI, SPEC, CHANGELOG ----------------------------------------
