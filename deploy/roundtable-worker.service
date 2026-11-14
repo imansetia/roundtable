@@ -1,0 +1,90 @@
+# Roundtable worker systemd service (M8). Install with:
+#   sudo cp deploy/roundtable-worker.service /etc/systemd/system/roundtable-worker.service
+#   sudo cp deploy/roundtable-worker.env.example /srv/roundtable/worker.env
+#   sudo chown roundtable:roundtable /srv/roundtable/worker.env
+#   sudo chmod 600 /srv/roundtable/worker.env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now roundtable-worker
+# Every directive is explained in docs/ADD-AGENT.md, section
+# "Running worker.py as a service". Nothing here touches Hermes
+# or any other service on the machine: the worker is a polling
+# loop that only talks to the board and to the model API.
+
+[Unit]
+Description=Roundtable worker (API-only model)
+Documentation=https://github.com/imansetia/roundtable/blob/main/docs/ADD-AGENT.md
+After=network-online.target
+After=roundtable.service
+Wants=network-online.target roundtable.service
+
+[Service]
+Type=simple
+User=roundtable
+Group=roundtable
+WorkingDirectory=/srv/roundtable/app
+# EnvironmentFile holds the secrets (worker token, model API
+# key). It must exist before the service starts; systemd reads
+# it, the worker never reads the file itself. Mode 600, owned by
+# roundtable. Never commit the installed file anywhere.
+EnvironmentFile=/srv/roundtable/worker.env
+ExecStart=/srv/roundtable/venv/bin/python /srv/roundtable/app/worker.py
+Restart=on-failure
+RestartSec=5
+# Files the service creates: none — the worker writes nothing to
+# disk (logs go to the journal), so no writable path is listed.
+UMask=0077
+
+# --- Memory safety (the VM has ~836 MiB total, ~278 MiB free) -----------
+# Kill this service if it ever grows past 128 MiB, instead of
+# letting it eat RAM Hermes needs. Measured use is tens of MiB,
+# so 128 MiB is about 3x headroom. If the kernel itself runs out
+# of RAM, prefer killing this worker (score 600) over the board
+# (500) and Hermes (default 0): higher score = killed first, and
+# the worker is a polling loop that restarts itself, while the
+# board holds the shared state. MemorySwapMax=0: MemoryMax does
+# not cover swap, and this VM is already swapping — without this,
+# the worker could push Hermes's pages out to swap. The service
+# gets no swap at all (same rule as roundtable.service, AUDIT-M3 R2).
+MemoryAccounting=true
+MemoryMax=128M
+MemorySwapMax=0
+OOMScoreAdjust=600
+
+# --- Sandboxing -----------------------------------------------------------
+# Same shape as roundtable.service (M3): the worker only needs
+# to read its code and talk to the network, nothing else.
+NoNewPrivileges=true
+# The whole filesystem is read-only for this process: the worker
+# writes nothing to disk, so no ReadWritePaths is listed.
+ProtectSystem=strict
+# No access to /home at all (Hermes and the operator live there).
+ProtectHome=true
+# Private /tmp, separate from everyone else's.
+PrivateTmp=true
+# No access to hardware devices.
+PrivateDevices=true
+# Cannot change kernel tunables, load kernel modules, or touch cgroups.
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# Cannot change the hostname, the clock, or read kernel logs.
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelLogs=true
+# Cannot use personality(2) to change how the kernel treats the process.
+LockPersonality=true
+# No SysV shared memory / semaphores left behind after a crash.
+RemoveIPC=true
+# Drop every Linux capability: talking to loopback:8000 and to the
+# model API over HTTPS needs none (only ports below 1024 need
+# privileges, and the worker never listens).
+CapabilityBoundingSet=
+# Only Unix, IPv4 and IPv6 sockets; no raw/packet sockets.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Only the syscalls a normal network service needs. Anything else is
+# refused with EPERM instead of running.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

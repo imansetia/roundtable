@@ -81,6 +81,90 @@ Auditor first.)
 > **Note:** these variables live only in this SSH session. If you open a
 > new terminal later, run Step 0 again first.
 
+## Part 0 — Getting connected (Tailscale + SSH)
+
+Before any step that touches the VM, get a working SSH session
+over Tailscale. Every command in this guide runs in that session,
+as `azureuser`, unless the step says `sudo`. If you already have
+a session open from earlier, check it is still alive — and
+remember Step 0's variables do not survive a new terminal, so run
+Step 0 again first in a fresh one.
+
+### Check Tailscale is up
+
+**Command (on your own computer):**
+
+```bash
+tailscale status
+```
+
+**Expected:** a list of machines, including the VM. If instead
+the command says you are not connected, there are two common
+causes:
+
+- **Logged out:** `tailscale status` prints `Logged out.`
+  Sign in again — on Windows, open the Tailscale app (tray
+  icon) and choose **Log in**; on the VM, run
+  `sudo tailscale up` and follow the login link it prints.
+  Then run `tailscale status` again.
+- **Socket permission error:** the command prints
+  `failed to connect to local tailscaled`. It cannot talk to
+  the Tailscale daemon as your user. Run it with sudo —
+  `sudo tailscale status` — and if the daemon itself is down,
+  `sudo systemctl status tailscaled` tells you. Do not chmod
+  the socket by hand.
+
+### Find the VM host
+
+The helper scripts default to the VM's Tailscale address,
+`100.75.20.68` (the `VM_HOST` default in
+`scripts/leader-token.sh` and `scripts/copy-worker-token.sh`).
+If SSH fails with `Connection timed out` or `No route to host`,
+the address may have changed: run `tailscale status` on your
+computer, find the VM in the list (the machine you SSH into as
+`azureuser`), and use its address — pass it as the first
+argument (`bash scripts/copy-worker-token.sh <address>`) or set
+`VM_HOST=<address>` for the session. Do not guess the address.
+
+### SSH in
+
+From Git Bash, use Windows OpenSSH (see "Which ssh" below):
+
+```bash
+/c/Windows/System32/OpenSSH/ssh.exe -i ~/.ssh/azure-hermes azureuser@100.75.20.68
+```
+
+From PowerShell, plain `ssh` is already Windows OpenSSH, so the
+same login is shorter:
+
+```powershell
+ssh -i ~/.ssh/azure-hermes azureuser@100.75.20.68
+```
+
+**Expected:** a shell prompt on the VM. The key is
+`~/.ssh/azure-hermes`. SSH works only over Tailscale — the
+public port 22 is closed, so a connection without Tailscale
+times out by design, not by mistake.
+
+### Which ssh: Windows OpenSSH, not Git's
+
+The helper scripts call Windows OpenSSH explicitly
+(`/c/Windows/System32/OpenSSH/ssh.exe`) — Git's ssh is refused
+by this VM, so a plain `ssh` typed in Git Bash is the wrong
+program. Always run the scripts (they pick the right ssh), or
+use the full Windows OpenSSH path above. The same applies to the
+key: it lives at `~/.ssh/azure-hermes` on your computer.
+
+### If a paste breaks: bracketed-paste markers
+
+Long pasted commands fail in Git Bash: the terminal inserts
+bracketed-paste markers (`[200~` … `~`) around a long paste and
+the command breaks. So this guide's steps tell you the short
+command to **type** (not paste). If a paste ever shows `[200~`
+markers, press `Ctrl+C` and type the short command instead.
+Never paste a token — use the no-display routes in CONNECT.md
+Part 2.
+
 ## Part 1 — Check the VM first (check, don't assume)
 
 ### Step 1 — Confirm you are on the right machine
