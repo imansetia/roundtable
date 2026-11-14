@@ -1,0 +1,13 @@
+# Never bake tokens or local state into the image (M10).
+.git
+.venv
+__pycache__
+*.pyc
+agents.json
+.env
+roundtable.db
+roundtable.db-wal
+roundtable.db-shm
+tests
+docs
+.pytest_cache

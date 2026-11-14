@@ -2,6 +2,59 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M10: publication (2026-11-14)
+
+Owner decision, 2026-11-14. A stranger could not try Roundtable
+in minutes, and the project had no public face. From M10 the
+board is one command to run locally, and it has a read-only
+public status page that reveals nothing about the board's content.
+
+- **Self-host packaging** — `scripts/install-local.sh` wraps the
+  Shape A quick-start (venv, pip install, agents.json via the
+  Python token pattern, run + whoami verification; leaves the
+  server running with a PID file and a log). Optional
+  `deploy/Dockerfile` + `deploy/.dockerignore` (python:3.12-slim,
+  a volume for the database, the agents config mounted read-only,
+  EXPOSE 8000). HTTPS/nginx remains a shape-B concern.
+- **Read-only public status page** — new unauthenticated
+  `GET /status` endpoint returning aggregates ONLY: board
+  name/version, task counts by status, active agent count, server
+  time. NEVER a title, description, result, message, or anything
+  derived from board content. SPEC section 7 gains the endpoint's
+  rules: public, aggregates only, rate-limited per client IP
+  (same per-minute limit as tool calls; behind a proxy it keys on
+  the first X-Forwarded-For entry only when the peer is loopback),
+  no audit row.
+- **nginx** exposes `/status` next to `/mcp` (everything else
+  still 404); DEPLOY.md gains an "Updating to M10" section and a
+  Part 11 verification item.
+- **Judgement call (Docker bind):** the Dockerfile binds the app
+  to 0.0.0.0 inside the container and publishes the port on the
+  host's loopback only (`-p 127.0.0.1:8000:8000`). Docker's port
+  mapping targets the container's interface, so a 127.0.0.1 bind
+  inside the container would refuse it; the loopback protection
+  lives at the publish step, and the board is never exposed to
+  the network. (The brief said "loopback bind"; this keeps that
+  property while working on every Docker host, including Mac and
+  Windows where --network host does not apply.)
+
+Docs, scripts and deploy templates, plus the first server change
+since M7 (the /status route only). No database schema change; no
+new token type; /mcp's bearer gate untouched; worker service
+untouched; board content never leaves the bearer gate.
+
+- **Audit fixes (AUDIT-M10.md, 2026-11-14):** R1 — `GET /status`
+  had no Host-header (DNS-rebinding) protection: the SDK applies
+  its transport security inside the `/mcp` handler only, so a
+  malicious webpage could rebind a domain to 127.0.0.1:8000 on a
+  Shape A install and read the aggregates. The handler now
+  validates Host (loopback hosts plus `ROUNDTABLE_ALLOWED_HOSTS`;
+  anything else → 404 with no detail), with tests that a forged
+  Host is rejected and an allowed host is accepted, and a line in
+  SPEC §7 item 11. R2 — `/status` gets its own nginx rate-limit
+  zone (20 r/s) so a flood on the unauthenticated page cannot
+  crowd out `/mcp` traffic.
+
 ## M9: operations & data safety (2026-11-14)
 
 Owner decision, 2026-11-14. The board's data depended on the

@@ -413,6 +413,25 @@ class Board:
             ]
         }
 
+    def public_status(self) -> dict:
+        """Aggregates for the public GET /status endpoint (SPEC
+        section 7, M10). Counts only — task counts by status and
+        the active agent count. No board content — no titles,
+        descriptions, results or messages — ever leaves this
+        method: the queries select COUNT(*) only, so there is
+        nothing derived from board content to leak."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT status, COUNT(*) FROM tasks GROUP BY status"
+            ).fetchall()
+            active = self._conn.execute(
+                "SELECT COUNT(*) FROM agents WHERE active = 1"
+            ).fetchone()[0]
+        counts = {status: 0 for status in STATUSES}
+        for status, n in rows:
+            counts[status] = n
+        return {"tasks_by_status": counts, "active_agents": active}
+
     # -- tools: tasks ---------------------------------------------------------
     def create_task(
         self,

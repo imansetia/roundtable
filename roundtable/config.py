@@ -42,6 +42,8 @@ class Settings:
     port: int = 8000
     db_path: str = "roundtable.db"
     agents_config: str = "agents.json"
+    # The board's public name, shown on the GET /status page (M10).
+    name: str = "Roundtable"
     rate_limit_per_minute: int = 60
     # Cap on the audit log's stored arguments, in megabytes
     # (ROUNDTABLE_HISTORY_MAX_MB, default 1024). Above it, audit rows
@@ -70,6 +72,7 @@ class Settings:
             agents_config=os.environ.get(
                 "ROUNDTABLE_AGENTS_CONFIG", "agents.json"
             ),
+            name=os.environ.get("ROUNDTABLE_NAME", "Roundtable"),
             rate_limit_per_minute=int(
                 os.environ.get("ROUNDTABLE_RATE_LIMIT_PER_MINUTE", "60")
             ),
