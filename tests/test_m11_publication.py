@@ -15,6 +15,7 @@ import sys
 import time
 import tomllib
 import urllib.error
+import socket
 import urllib.request
 from pathlib import Path
 
@@ -32,6 +33,24 @@ CLI = (ROOT / "roundtable" / "cli.py").read_text(encoding="utf-8")
 
 def flat(text: str) -> str:
     return " ".join(text.split())
+
+
+def free_port() -> int:
+    # In WSL2 mirrored networking, localhost is shared with Windows —
+    # a bind(0) pick can collide with a port a Windows-side process
+    # already holds (seen live: the Owner's PyPI-verification board
+    # on 8000). Verify the picked port is actually free before
+    # returning it.
+    for _ in range(10):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                continue  # something is listening there — pick another
+        except OSError:
+            return port
+    raise RuntimeError("no free port found in 10 tries")
 
 
 def run_cli(*args: str, cwd: Path | None = None, env: dict | None = None):
@@ -60,10 +79,10 @@ def test_pyproject_distribution_name():
 def test_pyproject_version_matches_package():
     # 0.2.1: the version moved, but pyproject and the package
     # must always agree.
-    assert PYPROJECT["project"]["version"] == "0.2.1"
+    assert PYPROJECT["project"]["version"] == "0.3.0"
     import roundtable
 
-    assert roundtable.__version__ == "0.2.1"
+    assert roundtable.__version__ == "0.3.0"
 
 
 def test_pyproject_license_python_classifiers():
@@ -130,14 +149,24 @@ def test_cli_no_args_prints_usage():
 
 def test_cli_run_starts_board(tmp_path):
     # init, then run the board and probe it: no token -> 401,
-    # /status -> 200. Same defaults as `python -m roundtable`.
+    # /status -> 200. Same defaults as `python -m roundtable`, on a
+    # free port — and the board gets its own name, because under
+    # WSL2 mirrored networking the default 8000 can be occupied by
+    # an ambient Windows-side process (seen live: the Owner's
+    # PyPI-verification board answering with 0.2.1), and the probe
+    # must verify it is talking to THIS test's board.
+    own_board = "roundtable-m12-cli-test"
     assert run_cli("init", cwd=tmp_path).returncode == 0
+    port = free_port()
     env = {
+        "PYTHONPATH": str(ROOT),
         "ROUNDTABLE_DB_PATH": str(tmp_path / "roundtable.db"),
         "ROUNDTABLE_AGENTS_CONFIG": str(tmp_path / "agents.json"),
+        "ROUNDTABLE_PORT": str(port),
+        "ROUNDTABLE_NAME": own_board,
     }
     proc = subprocess.Popen(
-        [sys.executable, "-m", "roundtable.cli", "run"],
+        [sys.executable, "-m", "roundtable.cli", "run", "--port", str(port)],
         cwd=str(tmp_path),
         env={**os.environ, **env},
         stdout=subprocess.PIPE,
@@ -151,7 +180,7 @@ def test_cli_run_starts_board(tmp_path):
             # POST, not GET: /mcp only serves POST, and the bearer
             # middleware answers 401 before the app routes it.
             req = urllib.request.Request(
-                "http://127.0.0.1:8000/mcp",
+                f"http://127.0.0.1:{port}/mcp",
                 data=b"",
                 method="POST",
             )
@@ -168,11 +197,13 @@ def test_cli_run_starts_board(tmp_path):
             time.sleep(0.5)
         assert up, "board did not come up (no 401 probe)"
         with urllib.request.urlopen(
-            "http://127.0.0.1:8000/status", timeout=5
+            f"http://127.0.0.1:{port}/status", timeout=5
         ) as resp:
             body = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
-        assert body["version"] == "0.2.1"
+        # M12: verify it is THIS test's board, not an ambient one.
+        assert body["board"] == own_board
+        assert body["version"] == "0.3.0"
     finally:
         proc.send_signal(signal.SIGTERM)
         proc.wait(timeout=10)
@@ -225,8 +256,8 @@ def test_readme_links_walkthrough_and_tools():
 
 def test_readme_status_m11():
     assert "M11 merged" in README
-    assert "200 tests pass" in README
-    assert "19 M11 publication" in README
+    assert "218 tests pass" in README
+    assert "20 M11 publication" in README
 
 
 # --- QUICKSTART, CI, SPEC, CHANGELOG ----------------------------------------
@@ -247,6 +278,24 @@ def test_ci_workflow():
     assert "sqlite3" in CI
     assert "push" in CI
     assert "pull_request" in CI
+
+
+def test_ci_workflow_permissions_and_pinned_actions():
+    # Co-sign N2: the workflow token is read-only, and the actions
+    # are pinned to commit SHAs (a tag is mutable; a SHA is not).
+    assert "permissions:" in CI
+    assert "contents: read" in CI
+    assert (
+        "uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        in CI
+    )
+    assert (
+        "uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
+        in CI
+    )
+    # The mutable tag references are gone.
+    assert "actions/checkout@v4" not in CI
+    assert "actions/setup-python@v5" not in CI
 
 
 def test_spec_m11():

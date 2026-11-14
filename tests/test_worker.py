@@ -506,7 +506,11 @@ def test_pages_past_non_matching_tasks(tmp_path, fake):
         for i in range(55):  # more than one page of non-matching tasks
             make_task(url, f"Rust task {i}", required_skill="rust")
         target = make_task(url, "Python target", required_skill="python")
-        cfg = worker_config(url, fake.url)
+        # Co-sign N5: 56 task creations plus two list pages plus the
+        # model call can push a single httpx call past the default
+        # 10 s model timeout on a slow container — widen it to the
+        # suite's 30 s convention (M6-FIXES N4).
+        cfg = worker_config(url, fake.url, WORKER_MODEL_TIMEOUT="30")
         assert drive(cfg) == "submitted"
         assert get_task(url, target["id"])["status"] == "submitted"
     finally:

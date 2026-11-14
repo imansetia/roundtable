@@ -52,6 +52,11 @@ today="$(date +%F)"
 dest="$DIR/roundtable-$today.db"
 sqlite3 "$DB" ".backup $dest"
 chmod 600 "$dest"
+# The .backup copy inherits the live database's WAL journal mode. The
+# copy is never written to, so switch it to DELETE mode: the next time
+# anything opens it, no -wal/-shm sidecars are created in backups/ to
+# linger outside the retention's reach. (Co-sign M12 follow-up.)
+sqlite3 "$dest" "PRAGMA journal_mode=DELETE" >/dev/null || echo "roundtable-backup: WARNING: could not switch $dest out of WAL mode; its -wal/-shm sidecars may linger." >&2
 
 # 4. Retention (backup FILES only) -----------------------------------------
 # Only files named roundtable-YYYY-MM-DD.db are ever pruned;
@@ -96,7 +101,7 @@ for f in "${ours[@]}"; do
         if [ "$f" = "$k" ]; then skip=1; break; fi
     done
     if [ "$skip" -eq 0 ]; then
-        rm -f -- "$f"
+        rm -f -- "$f" "$f-wal" "$f-shm"
         echo "roundtable-backup: pruned old backup $f" >&2
     fi
 done

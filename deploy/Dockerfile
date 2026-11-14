@@ -17,6 +17,11 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY roundtable/ ./roundtable/
 RUN pip install --no-cache-dir .
+# Co-sign N4: run as a non-root user. /data is prepared before the
+# USER switch so a named volume mounted there inherits the ownership.
+RUN useradd --system --home /app appuser \
+    && mkdir -p /data && chown appuser:appuser /data
+USER appuser
 # The database lives in a volume so it survives container restarts.
 VOLUME /data
 ENV ROUNDTABLE_HOST=0.0.0.0

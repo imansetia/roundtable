@@ -77,6 +77,26 @@ Existing tasks migrate from the single `required_skill` to the
 list: a set skill becomes a one-item list, an unset one becomes
 [].
 
+M12 (Owner decision, 2026-11-15): the leader may work, only when
+needed. `claim_task` by the leader is allowed on an open,
+unassigned task when the leader holds every required skill AND at
+least one leader-help rule holds — (a) a worker has posted a
+help_request message on the task, (b) no active worker holds every
+required skill (including when there are no active workers), (c)
+the task has been released by workers or rejected in review at
+least 2 times, counted from the audit log and the review history,
+never from a field an agent can set. Otherwise the claim is
+rejected with an error naming the rules. The reason is recorded as
+a server-written note in the task history. Four-eyes rule: when
+the leader submitted the result, `review_task` by the leader is
+rejected — an active peer worker (not the submitter) holding every
+required skill reviews it instead, with the same review-message
+history; if none is eligible the task stays `submitted` and its
+output says it waits for a peer reviewer. Workers still never
+review tasks submitted by workers: only the leader does, as
+before. The leader still cannot be a direct assignee at
+`create_task`.
+
 ### Task states
 
 ```
@@ -97,11 +117,11 @@ any non-final state -> cancelled     (leader only)
 | `create_task` | leader | Creates an `open` task. Optional `assignee` to assign directly (rejected if the assignee lacks a required skill). `required_skills` is a list (each at most 100 chars, at most 10); the old `required_skill` still works and means a one-item list. Warns in the result when no active worker has all the required skills. |
 | `list_tasks` | all | Filter by status / assignee. `claimable_by_me=true` (workers only) lists only open tasks the caller may claim. Paginated. |
 | `get_task` | all | One task with its messages and submissions. |
-| `claim_task` | worker | `open` -> `claimed`. Must be atomic: if two agents claim at once, exactly one succeeds. The worker must hold every required skill. |
+| `claim_task` | worker (leader under the leader-help rules, M12 — see section 5) | `open` -> `claimed`. Must be atomic: if two agents claim at once, exactly one succeeds. The claimant must hold every required skill. The leader may claim only when a leader-help rule holds, and the reason is recorded as a server-written note. |
 | `release_task` | assignee | `claimed` -> `open`. |
 | `post_message` | all | Adds a progress note, help request, or reply to a task. kind `review` is reserved for the server and is rejected. |
 | `submit_result` | assignee | `claimed` -> `submitted`, stores the result. Also stores a submission (every submission is kept, in order). |
-| `review_task` | leader | `submitted` -> `done`, or -> `open` with a review note. Also stores a review message (kind `review`) with the decision. |
+| `review_task` | leader — or a peer worker under the four-eyes rule (M12, see section 5) | `submitted` -> `done`, or -> `open` with a review note. Also stores a review message (kind `review`) with the decision. When the leader submitted the result, the leader cannot review it; an eligible peer worker reviews instead. |
 | `cancel_task` | leader | Cancels a non-final task. |
 
 Every rule in the "Who" column is enforced on the server. A call that breaks it returns a clear error and changes nothing.
@@ -156,7 +176,18 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 22. (M7) `worker.py` claims only what the server allows (`claimable_by_me`), including a multi-skill task it only partly matches.
 23. (M10) GET /status returns the right counts and no board content; repeated calls from one IP hit the rate limit; /status writes no audit row.
 24. (M11) `roundtable init` writes agents.json with fresh tokens (mode 600) and never overwrites an existing file; `roundtable run` starts the board; the package installs as roundtable-mcp 0.2.0.
-25. (0.2.1) The package version is 0.2.1 in pyproject and in roundtable.__version__; GET /status reports 0.2.1; the README install section uses the `uvx --from roundtable-mcp roundtable` form (the bare form only prints usage).
+25. (0.2.1) The package version in pyproject and in roundtable.__version__ always agree, and GET /status reports it (0.2.1 at that release); the README install section uses the `uvx --from roundtable-mcp roundtable` form (the bare form only prints usage).
+26. (M12) The leader's claim on a task where no leader-help rule holds is rejected with an error naming the rules, and the task stays open with no note written.
+27. (M12) The leader's claim is allowed when a worker has posted help_request on the task (rule a), and the reason is recorded as a server-written note.
+28. (M12) The leader's claim is allowed when no active worker holds every required skill (rule b).
+29. (M12) The leader's claim is allowed after the task has been released and rejected (rule c, >= 2 strikes from history).
+30. (M12) The leader without a required skill is rejected, even when a worker has asked for help.
+31. (M12) The leader cannot review a task it submitted itself (four-eyes); the task stays submitted.
+32. (M12) An eligible peer worker can approve and reject the leader's submission, with the review message history showing the peer worker as author.
+33. (M12) A worker without the required skills cannot peer-review the leader's submission.
+34. (M12) A worker can never review a task it submitted itself.
+35. (M12) When no eligible peer reviewer exists, the task stays submitted and list/get output says it waits for a peer reviewer.
+36. (M12) The leader-help reason is recorded in the task history as a server-written note, and the claim appears in the audit log.
 
 ## 10. Milestones
 
@@ -171,6 +202,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M9** — Operations & data safety: automatic daily backup with retention and a disk guard (Owner decision, 2026-11-14). -> Auditor review.
 - **M10** — Publication: self-host packaging and a read-only public status page (Owner decision, 2026-11-14). -> Auditor review.
 - **M11** — Publish as a public MCP: the package installs as roundtable-mcp 0.2.0, with a CLI, a landing-page README and CI (Owner decision, 2026-11-14). -> Auditor review.
+- **M12** — The leader may work, only when needed: leader-help claim rules and the four-eyes review rule (Owner decision, 2026-11-15). -> Auditor review.
 - **0.2.1** — Patch release: republish roundtable-mcp 0.2.1 with the merged README (the 0.2.0 PyPI long description was built from the pre-R1 tree). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.

@@ -619,14 +619,21 @@ sudo rm -rf /srv/roundtable/venv
 **Command:**
 
 ```bash
+/srv/roundtable/venv/bin/pip uninstall -y roundtable
 /srv/roundtable/venv/bin/pip install /srv/roundtable/app
 ```
 
-**What it does:** installs Roundtable and its dependencies (the MCP SDK,
-uvicorn, httpx) into the venv, from the checkout. This downloads
-packages from PyPI — the only step that needs the internet for code.
-(You may see a warning about the pip cache directory — it is harmless:
-the cache is simply disabled for this install.)
+**What it does:** the `uninstall` line removes the old-named
+distribution (`roundtable` 0.1.0) if this venv was built before the
+M11 rename — seen live on HermesVM, where the old dist lingers next to
+the new `roundtable-mcp` and its console script shadows the new one.
+On a fresh venv the uninstall simply prints a warning and does
+nothing. The `install` line then installs Roundtable and its
+dependencies (the MCP SDK, uvicorn, httpx) into the venv, from the
+checkout. This downloads packages from PyPI — the only step that
+needs the internet for code. (You may see a warning about the pip
+cache directory — it is harmless: the cache is simply disabled for
+this install.)
 
 **Expected:** ends with `Successfully installed roundtable ...` and no
 errors.
@@ -1451,6 +1458,7 @@ exactly where to go back to.
 git -C /srv/roundtable/app fetch origin
 git -C /srv/roundtable/app checkout "$AUDITED_COMMIT"
 git -C /srv/roundtable/app rev-parse HEAD
+/srv/roundtable/venv/bin/pip uninstall -y roundtable
 /srv/roundtable/venv/bin/pip install /srv/roundtable/app
 sudo systemctl restart roundtable
 systemctl status roundtable --no-pager | head -n 5
@@ -1461,7 +1469,10 @@ exactly the commit the Auditor approved for this update
 (`$AUDITED_COMMIT` — set it in Step 0 to the hash the Auditor gives
 you for the update; never `git pull` on `main` and go live with
 whatever happens to be there). The `rev-parse` must print exactly
-`$AUDITED_COMMIT`. Then it reinstalls the venv and restarts the
+`$AUDITED_COMMIT`. The `uninstall` line removes the old-named
+distribution (`roundtable` 0.1.0) that this venv still holds from
+pre-rename installs — seen live on HermesVM — so only the new
+`roundtable-mcp` remains. Then it reinstalls the venv and restarts the
 service (restart is correct here — it is Roundtable's own service, and
 the new code only loads on a restart; the "reload, never restart" rule
 is for nginx). Then checks it came back up.
@@ -1515,15 +1526,19 @@ commit:
 ```bash
 OLD=$(cat ~/roundtable-commit-before-update.txt)
 git -C /srv/roundtable/app checkout "$OLD"
+/srv/roundtable/venv/bin/pip uninstall -y roundtable-mcp
 /srv/roundtable/venv/bin/pip install /srv/roundtable/app
 sudo systemctl restart roundtable
 systemctl status roundtable --no-pager | head -n 5
 ```
 
 **What it does:** checks out the exact commit recorded in Step 45,
-reinstalls it, and restarts. (To go to a newer audited version
-afterwards, get its hash from the Auditor, set it as
-`AUDITED_COMMIT`, and repeat Step 46 — never `git checkout main`.)
+uninstalls the new-named distribution (`roundtable-mcp`) that
+M11-and-later installs — on a rollback the OLD code is what should
+remain — and reinstalls from the rolled-back checkout. (To go to a
+newer audited version afterwards, get its hash from the Auditor, set
+it as `AUDITED_COMMIT`, and repeat Step 46 — never
+`git checkout main`.)
 
 **Expected:** `Active: active (running)`, and Step 24 returns `401`.
 

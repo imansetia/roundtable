@@ -31,16 +31,6 @@ def _init(args: argparse.Namespace) -> int:
     """Generate agents.json with fresh tokens. Never overwrites an
     existing file, and never echoes the generated tokens."""
     path = Path(args.path)
-    if path.exists():
-        print(
-            f"error: {path} already exists — refusing to overwrite it.",
-            file=sys.stderr,
-        )
-        print(
-            "Delete it (or point --path at a fresh location) and try again.",
-            file=sys.stderr,
-        )
-        return 2
     agents = [
         {**agent, "token": secrets.token_urlsafe(48)}
         for agent in DEFAULT_AGENTS
@@ -50,8 +40,24 @@ def _init(args: argparse.Namespace) -> int:
         "Exactly one agent must be the leader.",
         "agents": agents,
     }
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    os.chmod(path, 0o600)
+    # Co-sign N3: create the file exclusively and with its final mode in
+    # one syscall — it is never briefly world-readable, and two racing
+    # inits cannot both "win" (O_EXCL).
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        print(
+            f"error: {path} already exists — refusing to overwrite it.",
+            file=sys.stderr,
+        )
+        print(
+            "Delete it (or point --path at a fresh location) and try again.",
+            file=sys.stderr,
+        )
+        return 2
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+        fh.write("\n")
     print(f"Board config written to {path} (mode 600).")
     print()
     print("Start it:")

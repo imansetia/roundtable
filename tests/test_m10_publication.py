@@ -73,9 +73,21 @@ SPEC_FLAT = flat(SPEC)
 
 
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    # In WSL2 mirrored networking, localhost is shared with Windows —
+    # a bind(0) pick can collide with a port a Windows-side process
+    # already holds (seen live: the Owner's PyPI-verification board
+    # on 8000). Verify the picked port is actually free before
+    # returning it.
+    for _ in range(10):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                continue  # something is listening there — pick another
+        except OSError:
+            return port
+    raise RuntimeError("no free port found in 10 tries")
 
 
 def start_server(
@@ -221,7 +233,7 @@ def test_status_returns_aggregates_only(tmp_path):
         body = resp.json()
         assert body["ok"] is True
         assert body["board"] == "Roundtable"
-        assert body["version"] == "0.2.1"
+        assert body["version"] == "0.3.0"
         assert body["tasks_by_status"] == {
             "open": 1,
             "claimed": 1,
@@ -463,6 +475,17 @@ def test_install_local_script():
 
 
 def test_install_local_script_runs(tmp_path):
+    # Skip when something already listens on 127.0.0.1:8000 — e.g.
+    # the Owner's own PyPI-verification board — the script refuses
+    # to double-bind and this test cannot run next to it.
+    import socket as _socket
+    probe = _socket.socket()
+    try:
+        probe.bind(("127.0.0.1", 8000))
+    except OSError:
+        pytest.skip("127.0.0.1:8000 is occupied by another local board")
+    finally:
+        probe.close()
     # The real run, in a temp copy of the repo: the script sets up
     # a venv, installs, generates tokens, starts the board, verifies
     # it (401 + whoami + /status), and leaves it running. The test
@@ -534,6 +557,20 @@ def test_dockerfile():
             assert "agents.json" not in line
 
 
+def test_dockerfile_runs_as_non_root():
+    # Co-sign N4: the container does not run as root — a non-root
+    # user is created, /data is prepared for it, and the USER
+    # switch happens before the server starts.
+    assert "useradd" in DOCKERFILE
+    assert "chown appuser:appuser /data" in DOCKERFILE
+    assert "USER appuser" in DOCKERFILE
+    # The USER switch comes before the last container step.
+    lines = DOCKERFILE.splitlines()
+    user_line = next(i for i, l in enumerate(lines) if l.startswith("USER "))
+    cmd_line = next(i for i, l in enumerate(lines) if l.startswith("CMD"))
+    assert user_line < cmd_line
+
+
 def test_dockerignore():
     for entry in ("agents.json", ".env", ".venv", ".git", "roundtable.db"):
         assert entry in DOCKERIGNORE
@@ -590,8 +627,8 @@ def test_readme_public_status_section():
     assert "aggregates only" in README.lower()
     assert "Host policy" in README
     assert "M10 merged" in README
-    assert "200 tests pass" in README
-    assert "22 M10 publication" in README
+    assert "218 tests pass" in README
+    assert "26 M10 publication" in README
 
 
 def test_changelog_m10():
@@ -611,3 +648,84 @@ def test_m10_scope_guard():
 def test_add_agent_shapes_note_status():
     assert "/status" in ADD_AGENT
     assert "shapes b and c" in flat(ADD_AGENT).lower()
+
+
+# -- Co-sign N1: the /status limiter must not key on forged XFF -----------
+
+def test_status_client_ip_ignores_forged_xff():
+    # Unit test on the helper with a hand-built scope (uvicorn's own
+    # proxy middleware is bypassed here, which is exactly the path
+    # where the old explicit X-Forwarded-For branch was forgeable:
+    # a direct loopback client chose its own limiter key through the
+    # header). The fixed helper keys on the peer, never on the
+    # client-supplied header.
+    from starlette.requests import Request
+
+    from roundtable.server import _status_client_ip
+
+    scope = {
+        "type": "http",
+        "client": ("127.0.0.1", 50000),
+        "headers": [
+            (b"host", b"127.0.0.1"),
+            (b"x-forwarded-for", b"9.9.9.9"),
+        ],
+    }
+    request = Request(scope)
+    assert _status_client_ip(request) == "127.0.0.1"
+
+    # No header at all: same answer (the peer).
+    scope_noxff = {
+        "type": "http",
+        "client": ("127.0.0.1", 50000),
+        "headers": [(b"host", b"127.0.0.1")],
+    }
+    assert _status_client_ip(Request(scope_noxff)) == "127.0.0.1"
+
+
+def test_status_rate_limit_same_forged_xff_shares_budget(tmp_path):
+    # Endpoint-level behaviour after the N1 fix, stated honestly: a
+    # direct loopback client CAN still choose its limiter key through
+    # uvicorn's own trusted-loopback rewriting (a forged single-entry
+    # X-Forwarded-For becomes request.client) — the old explicit
+    # branch is gone, but uvicorn's rewrite remains. What the fix
+    # guarantees: identical forged values share ONE budget, so a
+    # flood with one forged address is bounded, and the idle-key
+    # pruning bounds the key dict. The untrusted path (internet ->
+    # nginx) is forge-proof: nginx appends the real client address
+    # as the rightmost entry, and uvicorn's walk stops at the first
+    # untrusted host — the real client.
+    proc, mcp_url, db_path = start_server(tmp_path, free_port(), rate_limit=60)
+    try:
+        codes = []
+        with httpx.Client(trust_env=False, timeout=5) as http:
+            for _ in range(75):
+                resp = http.get(
+                    status_url(mcp_url),
+                    headers={"X-Forwarded-For": "203.0.113.99"},
+                )
+                codes.append(resp.status_code)
+        assert codes[:60] == [200] * 60
+        assert all(c == 429 for c in codes[60:])
+    finally:
+        stop_server(proc)
+
+
+def test_rate_limiter_prunes_idle_keys(monkeypatch):
+    # Co-sign N1b: /status keys per client address, so the limiter's
+    # key dict would grow without bound over many distinct addresses.
+    # Keys idle for the whole window are pruned on every check.
+    import roundtable.server as server_mod
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        server_mod.time, "monotonic", lambda: clock["now"]
+    )
+    limiter = server_mod.RateLimiter(60)
+    limiter.check("a")
+    limiter.check("b")
+    limiter.check("c")
+    assert set(limiter._calls) == {"a", "b", "c"}
+    clock["now"] = 2000.0  # everything idle for far more than a window
+    limiter.check("d")
+    assert set(limiter._calls) == {"d"}

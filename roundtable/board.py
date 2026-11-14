@@ -205,14 +205,13 @@ class Board:
             raise RoundtableError(f"task not found: {task_id}")
         return row
 
-    @staticmethod
-    def _task_dict(row) -> dict:
+    def _task_dict(self, row) -> dict:
         # M7: the task carries both forms of the requirement.
         # required_skills is the list; required_skill is the legacy
         # single-skill view (the first skill, or None) so existing
         # clients still work.
         skills = skills_from_json(row["required_skills"])
-        return {
+        result = {
             "id": row["id"],
             "title": row["title"],
             "description": row["description"],
@@ -226,6 +225,35 @@ class Board:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+        # M12 four-eyes: when a leader-submitted task sits in review,
+        # the output says who must review it — an active peer worker
+        # holding every required skill (the leader cannot review its
+        # own work). Only submitted tasks with a leader assignee
+        # carry the field.
+        if row["status"] == "submitted" and row["assignee"]:
+            role_row = self._conn.execute(
+                "SELECT role FROM agents WHERE name = ? AND active = 1",
+                (row["assignee"],),
+            ).fetchone()
+            if role_row is not None and role_row["role"] == "leader":
+                workers = self._conn.execute(
+                    "SELECT skills FROM agents WHERE role = 'worker' "
+                    "AND active = 1"
+                ).fetchall()
+                eligible = any(
+                    not self._missing_skills(
+                        skills_from_json(w["skills"]), skills
+                    )
+                    for w in workers
+                )
+                note = "waiting for a peer worker"
+                if not eligible:
+                    note += (
+                        " (none eligible — no active worker holds every "
+                        "required skill)"
+                    )
+                result["peer_review"] = note
+        return result
 
     def _messages_for(self, task_id: int) -> list[dict]:
         rows = self._conn.execute(
@@ -587,7 +615,10 @@ class Board:
         return task
 
     def claim_task(self, agent: Agent, task_id: int) -> dict:
-        self._require_worker(agent)
+        if agent.role == "leader":
+            self._require_leader(agent)
+        else:
+            self._require_worker(agent)
         with self._lock:
             row = self._get_task_row(task_id)
             if row["status"] != "open":
@@ -599,13 +630,30 @@ class Board:
                     f"task {task_id} is assigned to {row['assignee']!r}, "
                     f"not to {agent.name!r}"
                 )
-            # M7: skills are enforced on the server. The worker must
-            # have every required skill; skills come only from
-            # agents.json (the token), never from the agent.
-            missing = self._missing_skills(
-                agent.skills, skills_from_json(row["required_skills"])
-            )
-            if missing:
+            # M7: skills are enforced on the server. Skills come only
+            # from agents.json (the token), never from the agent —
+            # and since M12 that rule binds the leader too.
+            required = skills_from_json(row["required_skills"])
+            missing = self._missing_skills(agent.skills, required)
+            leader_reason: str | None = None
+            if agent.role == "leader":
+                # M12: the leader may work, only when needed.
+                if missing:
+                    raise RoundtableError(
+                        f"leader {agent.name!r} lacks required skill(s): "
+                        f"{', '.join(missing)}"
+                    )
+                leader_reason = self._leader_claim_reason(task_id, required)
+                if leader_reason is None:
+                    raise RoundtableError(
+                        "leader claim rejected: none of the leader-help "
+                        "rules holds for this task — (a) no worker has "
+                        "posted help_request on it, (b) every active "
+                        "worker holds all required skills, (c) it has "
+                        "not been released or rejected at least 2 times. "
+                        "A worker must claim it."
+                    )
+            elif missing:
                 raise RoundtableError(
                     f"worker {agent.name!r} lacks required skill(s): "
                     f"{', '.join(missing)}"
@@ -616,12 +664,72 @@ class Board:
                 "updated_at = ? WHERE id = ? AND status = 'open'",
                 (agent.name, _now(), task_id),
             )
+            if agent.role == "leader":
+                # M12: a server-written note records why the leader
+                # stepped in — same transaction as the claim, visible
+                # in the task history and to the peer reviewer.
+                self._conn.execute(
+                    "INSERT INTO messages (task_id, author, kind, body, "
+                    "decision, created_at) VALUES (?, ?, 'note', ?, NULL, ?)",
+                    (
+                        task_id,
+                        agent.name,
+                        f"Leader claim — allowed by rule: {leader_reason}.",
+                        _now(),
+                    ),
+                )
             self._conn.commit()
             if cur.rowcount != 1:
                 raise RoundtableError(
                     f"task {task_id} could not be claimed (already claimed)"
                 )
-            return self._task_dict(self._get_task_row(task_id))
+            result = self._task_dict(self._get_task_row(task_id))
+            if leader_reason is not None:
+                result["leader_claim_reason"] = leader_reason
+            return result
+
+    def _leader_claim_reason(
+        self, task_id: int, required: list[str]
+    ) -> str | None:
+        """M12 leader-help rules, in order (SPEC section 5). Returns
+        the first rule that allows the leader to claim this task, or
+        None when none holds. Everything is counted from history —
+        the audit log and the server-written review messages — never
+        from a field an agent can set."""
+        asked = self._conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE task_id = ? "
+            "AND kind = 'help_request' "
+            "AND author IN (SELECT name FROM agents WHERE role = 'worker' "
+            "AND active = 1)",
+            (task_id,),
+        ).fetchone()[0]
+        if asked:
+            return "a worker asked for help on this task"
+        workers = self._conn.execute(
+            "SELECT skills FROM agents WHERE role = 'worker' AND active = 1"
+        ).fetchall()
+        if not any(
+            not self._missing_skills(skills_from_json(w["skills"]), required)
+            for w in workers
+        ):
+            return "no active worker holds all required skills"
+        # Claude audit C1: count only SUCCESSFUL releases made by
+        # workers. Failed release_task calls (e.g. on an open task)
+        # are logged with their task_id since M6 — the leader could
+        # manufacture rule-(c) strikes by calling release_task twice
+        # on an open task. Rate-limited rows carry a task_id too.
+        strikes = self._conn.execute(
+            "SELECT (SELECT COUNT(*) FROM audit_log WHERE tool = 'release_task' "
+            "AND task_id = :tid AND outcome = 'success' "
+            "AND agent IN (SELECT name FROM agents WHERE role = 'worker')) "
+            "+ (SELECT COUNT(*) FROM messages "
+            "WHERE task_id = :tid AND kind = 'review' "
+            "AND decision = 'rejected')",
+            {"tid": task_id},
+        ).fetchone()[0]
+        if strikes >= 2:
+            return "released or rejected at least 2 times"
+        return None
 
     def release_task(self, agent: Agent, task_id: int) -> dict:
         with self._lock:
@@ -726,7 +834,6 @@ class Board:
     def review_task(
         self, agent: Agent, task_id: int, approve: bool, review_note: str = ""
     ) -> dict:
-        self._require_leader(agent)
         _check_size("review_note", review_note or "", REVIEW_NOTE_MAX)
         if not approve and not (review_note or "").strip():
             raise RoundtableError(
@@ -738,6 +845,35 @@ class Board:
                 raise RoundtableError(
                     f"task {task_id} is {row['status']!r}, not 'submitted'"
                 )
+            # M12 four-eyes: when the leader submitted the result (it
+            # claimed the task under the leader-help rules), the
+            # leader cannot review its own work — an active peer
+            # worker holding every required skill reviews instead.
+            required = skills_from_json(row["required_skills"])
+            submitter_role = self._conn.execute(
+                "SELECT role FROM agents WHERE name = ? AND active = 1",
+                (row["assignee"],),
+            ).fetchone()
+            leader_submitted = (
+                submitter_role is not None and submitter_role[0] == "leader"
+            )
+            if leader_submitted:
+                if agent.role == "leader":
+                    raise RoundtableError(
+                        "four-eyes rule: the leader cannot review a task "
+                        "it submitted itself — an active peer worker "
+                        "holding every required skill must review it"
+                    )
+                missing = self._missing_skills(agent.skills, required)
+                if missing:
+                    raise RoundtableError(
+                        f"peer reviewer {agent.name!r} lacks required "
+                        f"skill(s): {', '.join(missing)}"
+                    )
+            else:
+                # Worker-submitted tasks: only the leader reviews,
+                # as always.
+                self._require_leader(agent)
             now = _now()
             if approve:
                 self._conn.execute(
