@@ -481,3 +481,41 @@ def test_36_reason_recorded_in_history_and_audit(tmp_path):
         assert claims and claims[0]["agent"] == "planner"
     finally:
         stop_server(proc)
+
+
+def test_37_failed_releases_do_not_count_as_strikes(tmp_path):
+    # Claude audit C1: failed release_task calls are logged with
+    # their task_id (since M6), so the leader could manufacture
+    # rule-(c) strikes by calling release_task twice on an open
+    # task — and so could a worker. Only SUCCESSFUL releases by
+    # workers count as strikes.
+    tmp = tmp_path
+    port = free_port()
+    proc, url, db_path = start_server(tmp, port)
+    try:
+        task = make_task(url, "M12 no fake strikes", required_skills=["python"])
+        # Two FAILED release_task calls: the task is open, so both
+        # are rejected and logged as errors with the task_id.
+        err, _ = call(url, LEADER, "release_task", {"task_id": task["id"]})
+        assert err
+        err, _ = call(url, CODER, "release_task", {"task_id": task["id"]})
+        assert err
+        # The failed rows exist in the audit log (the bug counted
+        # them): verify the precondition of the bypass.
+        rows = db_rows(
+            db_path,
+            "SELECT tool, outcome, agent FROM audit_log "
+            "WHERE tool = 'release_task' AND task_id = ?",
+            (task["id"],),
+        )
+        assert len(rows) == 2
+        assert all(r["outcome"] == "error" for r in rows)
+        # The leader's claim must still be rejected.
+        err, data = call(url, LEADER, "claim_task", {"task_id": task["id"]})
+        assert err
+        assert "leader claim rejected" in str(data)
+        err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
+        assert data["task"]["status"] == "open"
+        assert data["task"]["assignee"] is None
+    finally:
+        stop_server(proc)

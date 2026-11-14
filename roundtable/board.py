@@ -713,9 +713,16 @@ class Board:
             for w in workers
         ):
             return "no active worker holds all required skills"
+        # Claude audit C1: count only SUCCESSFUL releases made by
+        # workers. Failed release_task calls (e.g. on an open task)
+        # are logged with their task_id since M6 — the leader could
+        # manufacture rule-(c) strikes by calling release_task twice
+        # on an open task. Rate-limited rows carry a task_id too.
         strikes = self._conn.execute(
             "SELECT (SELECT COUNT(*) FROM audit_log WHERE tool = 'release_task' "
-            "AND task_id = :tid) + (SELECT COUNT(*) FROM messages "
+            "AND task_id = :tid AND outcome = 'success' "
+            "AND agent IN (SELECT name FROM agents WHERE role = 'worker')) "
+            "+ (SELECT COUNT(*) FROM messages "
             "WHERE task_id = :tid AND kind = 'review' "
             "AND decision = 'rejected')",
             {"tid": task_id},
