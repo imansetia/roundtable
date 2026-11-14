@@ -58,9 +58,8 @@ def test_pyproject_distribution_name():
 
 
 def test_pyproject_version_matches_package():
-    # 0.2.1 patch: the version moved, but pyproject and the package
-    # must always agree (the 0.2.0 PyPI upload shipped a stale README
-    # because the built files came from an older tree).
+    # 0.2.1: the version moved, but pyproject and the package
+    # must always agree.
     assert PYPROJECT["project"]["version"] == "0.2.1"
     import roundtable
 
@@ -76,7 +75,9 @@ def test_pyproject_license_python_classifiers():
     assert "Programming Language :: Python :: 3" in classifiers
     assert "Programming Language :: Python :: 3.11" in classifiers
     assert project["readme"] == "README.md"
-    assert "Shared task board" in project["description"]
+    # 0.2.1: the summary now leads with "Self-hosted", so match
+    # case-insensitively.
+    assert "shared task board" in project["description"]
 
 
 def test_pyproject_console_script():
@@ -224,7 +225,7 @@ def test_readme_links_walkthrough_and_tools():
 
 def test_readme_status_m11():
     assert "M11 merged" in README
-    assert "199 tests pass" in README
+    assert "200 tests pass" in README
     assert "19 M11 publication" in README
 
 
