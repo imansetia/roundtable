@@ -2,6 +2,63 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## M8: onboarding & operations (2026-11-14)
+
+Owner decision, 2026-11-14. Adding a new agent was scattered
+knowledge: the token pattern lived in DEPLOY.md Step 15, the
+handoff routes in CONNECT.md, the worker setup in `worker.py`'s
+docstring, and the "how do I even connect" answers in the
+Owner's and the Auditor's heads. From M8 it is one documented,
+repeatable procedure.
+
+- **docs/ADD-AGENT.md** — a beginner runbook for adding any
+  agent: choose name/role/skills; edit `agents.json` with the
+  Python heredoc pattern (token generated inside Python, file
+  stays mode 600, exactly one leader); restart the service;
+  verify names/roles without printing tokens; token handoff
+  routes (no-display pipe for Claude Code, clipboard route for
+  secure cards, clipboard history cleared afterwards);
+  connecting a generic MCP client and an opencode client;
+  connecting an API-only model via `worker.py`; verify with
+  `whoami`.
+- **Part 0 in DEPLOY.md and CONNECT.md** — "getting connected"
+  plus troubleshooting: Tailscale status/login (logged-out
+  state, socket permission error), finding the VM host
+  (`scripts/leader-token.sh` default), Windows OpenSSH vs Git's
+  ssh, bracketed-paste markers. The Git Bash entry and the
+  bracketed-paste note moved out of CONNECT.md's intro into its
+  Part 0, so all of it lives in one place.
+- **worker.py as an always-on service** — deploy templates
+  (`deploy/roundtable-worker.service`,
+  `deploy/roundtable-worker.env.example`) and a documented
+  choice of where it runs. Proposed default: the VM. The VM is
+  already the operated host (systemd restart and logs, on
+  24/7), the worker is light (tens of MiB), the unit caps it at
+  128 MiB and prefers killing it over the board
+  (OOMScoreAdjust 600 vs 500) and Hermes (0), and it
+  reconnects by itself after a board restart. Alternative: the
+  Owner PC — the model API key then stays on the Owner's own
+  machine and nothing is added to the VM, but the worker only
+  runs while the PC is awake and Windows has no systemd.
+  API-key placement rules: never in the repo, never in chat;
+  on the VM only in `/srv/roundtable/worker.env` (mode 600,
+  outside the checkout), on the PC only in a local `.env` or
+  the Task Scheduler environment.
+
+Docs, scripts and deploy templates only. No server behaviour
+change.
+
+Audit (AUDIT-M8.md, ZCode, 2026-11-14): PASS WITH REQUIRED
+FIXES. R1: the opencode section was out of date with opencode's
+current docs — reworked to the documented shape (servers under
+`mcp.servers`, file `opencode.jsonc`, global route `opencode
+mcp add --global`); the `{env:}` substitution, the `opencode
+mcp list` check and the env-var-over-file advice were already
+correct and are kept. R2 (Owner's choice, 2026-11-14): the
+deployment-shapes + local quick-start addendum is included in
+M8 instead of leading M10. AUDIT-M8.md added to `docs/audits/`
+unchanged. Full suite: 145 passed (11 M8 tests).
+
 ## M7 notes (N1–N2) (2026-11-14)
 
 M7 is deployed on HermesVM (a58d786; AUDIT-M7-FIXES.md PASS) and

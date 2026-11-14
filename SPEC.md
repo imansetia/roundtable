@@ -163,6 +163,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M5** — Permanent review history: every review stores a review message (Owner decision, 2026-11-11). -> Auditor review.
 - **M6** — Complete activity history: every submission is kept, and every tool call is logged with its arguments (Owner decision, 2026-11-12). -> Auditor review.
 - **M7** — Skills are enforced on the server (Owner decision, 2026-11-13). -> Auditor review.
+- **M8** — Onboarding & operations: adding an agent is a documented runbook (Owner decision, 2026-11-14). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.
 

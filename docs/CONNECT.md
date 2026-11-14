@@ -17,13 +17,17 @@ Step 43 (backup). The same rules apply throughout: one command at a
 time, each approved by the Owner; Hermes is never stopped, restarted
 or reconfigured; nothing Roundtable did not create is touched.
 
-**What you need before Step 1:** an SSH session to the VM over
-Tailscale (as in DEPLOY.md), the Auditor present, and the two new
-agent names decided (Step 1 uses them). The Owner's computer is
-Windows; run the PC-side commands in **Git Bash** (a POSIX shell),
-not PowerShell 5.1, which aliases `curl` to `Invoke-WebRequest`
-(see DEPLOY.md Part 11). To get into Git Bash from PowerShell, in
-a **separate window** (not the Claude app's own terminal panel):
+**What you need before Step 1:** a working connection (Part 0
+below), the Auditor present, and the two new agent names decided
+(Step 1 uses them).
+
+## Part 0 — Getting connected (before Step 1)
+
+The Owner's computer is Windows. Everything PC-side in this
+guide runs in **Git Bash** (a POSIX shell), not PowerShell 5.1,
+which aliases `curl` to `Invoke-WebRequest` (see DEPLOY.md
+Part 11). To get into Git Bash from PowerShell, in a **separate
+window** (not the Claude app's own terminal panel):
 
 ```powershell
 & "C:\Program Files\Git\bin\bash.exe" --login
@@ -38,6 +42,38 @@ folder first — every script in this guide runs from there:
 cd ~/Projects/roundtable
 ```
 
+### Check Tailscale is up
+
+Run `tailscale status` on your computer. **Expected:** a list of
+machines, including the VM. If it prints `Logged out.`, sign in
+again (Tailscale app, tray icon, **Log in**). If it prints
+`failed to connect to local tailscaled`, the command cannot talk
+to the daemon as your user — run it with sudo on the VM
+(`sudo tailscale status`). SSH works only over Tailscale; the
+public port 22 is closed, so a connection without Tailscale
+times out by design.
+
+### Find the VM host
+
+The helper scripts default to the VM's Tailscale address,
+`100.75.20.68` (the `VM_HOST` default in
+`scripts/leader-token.sh` and `scripts/copy-worker-token.sh`).
+If a script fails with `Connection timed out` or `No route to
+host`, the address may have changed: run `tailscale status`,
+find the VM in the list, and pass its address as the first
+argument (`bash scripts/copy-worker-token.sh <address>`) or set
+`VM_HOST=<address>` for the session. Do not guess the address.
+
+### Which ssh: Windows OpenSSH, not Git's
+
+The helper scripts call Windows OpenSSH explicitly
+(`/c/Windows/System32/OpenSSH/ssh.exe`) — Git's ssh is refused
+by this VM, so a plain `ssh` typed in Git Bash is the wrong
+program. Always run the scripts (they pick the right ssh). The
+key is `~/.ssh/azure-hermes` on your computer.
+
+### If a paste breaks: bracketed-paste markers
+
 Long pasted commands fail in that window: the terminal inserts
 bracketed-paste markers (`[200~` … `~`) around a long paste and
 the command breaks. So this guide ships small helper scripts with
@@ -45,7 +81,7 @@ the command breaks. So this guide ships small helper scripts with
 `scripts/start-leader.sh`, `scripts/copy-worker-token.sh` — and
 each step tells you the short command to **type** (not paste) to
 run one. If a paste ever shows `[200~` markers, press `Ctrl+C`
-and type the short command instead.
+and type the short command instead. Never paste a token.
 
 ## Sources
 
