@@ -536,7 +536,7 @@ class Board:
             cur = self._conn.execute(
                 "INSERT INTO tasks (title, description, required_skills, "
                 "status, created_by, assignee, effort, created_at, "
-                "updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)",
+                "updated_at) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?)",
                 (
                     title,
                     description or "",

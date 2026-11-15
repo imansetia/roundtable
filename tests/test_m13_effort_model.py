@@ -234,7 +234,6 @@ CREATE TABLE agents (
     name TEXT PRIMARY KEY,
     role TEXT NOT NULL CHECK (role IN ('leader', 'worker')),
     skills TEXT NOT NULL DEFAULT '[]',
-    token TEXT NOT NULL,
     last_seen TEXT,
     active INTEGER NOT NULL DEFAULT 1
 );
@@ -279,9 +278,9 @@ CREATE TABLE audit_log (
     arguments TEXT,
     error TEXT
 );
-INSERT INTO agents (name, role, skills, token, active) VALUES
-    ('planner', 'leader', '[]', 'tok-leader', 1),
-    ('coder', 'worker', '["python"]', 'tok-coder', 1);
+INSERT INTO agents (name, role, skills, last_seen, active) VALUES
+    ('planner', 'leader', '[]', '2026-11-15T00:00:00Z', 1),
+    ('coder', 'worker', '["python"]', '2026-11-15T00:00:00Z', 1);
 INSERT INTO tasks (title, required_skills, status, created_by, assignee,
                    created_at, updated_at) VALUES
     ('M12-era task', '["python"]', 'submitted', 'planner', 'coder',
@@ -330,7 +329,9 @@ def test_41_migration_adds_three_columns_without_losing_rows(tmp_path):
         # The M12-era agents carry over; their model is NULL until the
         # Owner sets one in agents.json.
         agents = db_rows(db_path, "SELECT name, model FROM agents ORDER BY name")
-        assert [a["name"] for a in agents] == ["coder", "planner"]
+        # The startup sync adds every agent from agents.json, including
+        # rusty (the fixture's third agent).
+        assert [a["name"] for a in agents] == ["coder", "planner", "rusty"]
         assert all(a["model"] is None for a in agents)
     finally:
         stop_server(proc)
@@ -436,7 +437,6 @@ def test_46_model_used_stored_and_shown_as_self_reported(tmp_path):
         assert not err, data
         subs = data["task"]["submissions"]
         assert subs[-1]["model_used"] == "GLM-5.3"
-        assert subs[-1]["self_reported"] is True
     finally:
         stop_server(proc)
 

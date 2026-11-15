@@ -345,6 +345,7 @@ def test_m6_f1_rate_limited_call_stores_no_arguments(tmp_path):
                     "required_skill": None,
                     "required_skills": None,
                     "assignee": None,
+                    "effort": None,
                 }
             ).encode("utf-8")
         )
