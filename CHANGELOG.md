@@ -2,6 +2,51 @@
 
 One entry per milestone, including deviations from SPEC.md (section 12).
 
+## 0.4.0: effort levels, model notes, skill catalog (M13) (2026-11-15)
+
+Owner decision, 2026-11-15. Agents run different models (GLM-5.3 or
+its Flash variant, Gemini models at low/medium/high reasoning, and
+others), but Roundtable cannot choose or verify the model behind a
+token: that is set in each agent's own app. So M13 adds hints and
+records only. **No permission changes**: claim, review and cancel
+read none of the new fields.
+
+- **Effort** - `create_task` takes an optional `effort` (`low`,
+  `medium` or `high`); any other value is an error. It is a hint for
+  the model and reasoning level the worker picks. Stored in
+  `tasks.effort` (null when omitted) and shown in `get_task` and
+  `list_tasks`.
+- **Model note per agent** - agents.json may carry an optional
+  `model` string (at most 100 chars, set by the Owner). It is checked
+  at start-up, stored in `agents.model`, and shown in `whoami` and
+  `list_agents`, so the leader can give heavy tasks to the strongest
+  model.
+- **Model used per submission** - `submit_result` takes an optional
+  `model_used` (at most 100 chars), stored in
+  `submissions.model_used` and shown in the submission history. It is
+  self-reported and cannot be verified by the server. A blank value
+  is stored as null.
+- **Migration** - three guarded `ADD COLUMN`s, idempotent, no
+  back-fill. `tasks.effort` carries the same CHECK on migrated and
+  fresh databases.
+- **Skill catalog** - docs/ADD-AGENT.md lists the recommended skill
+  categories and the rule: label a skill only when the agent's app
+  really has the tools for it.
+- **Tests** - SPEC section 9, items 37-52 (item 37 records the M12
+  audit fix C1 test).
+
+Built by ZCode (code, commits c7a10c4 and 4ef1853). After AUDIT-M13
+(CHANGES REQUESTED: docs and version not committed), the Auditor
+completed the docs, the 0.4.0 bump and notes N1/N2 on the same
+branch at the Owner's request. That part therefore needs an
+independent check before merge.
+
+Correction to the 0.3.0 entry below: 0.2.1 *was* published on PyPI
+(PyPI carries 0.2.0, 0.2.1 and 0.3.0).
+
+Deviations from SPEC.md: none - SPEC sections 5, 6, 9 and 10 were
+updated with this milestone as the Owner's decision.
+
 ## 0.3.0: the leader may work, only when needed (M12) (2026-11-15)
 
 Owner decision, 2026-11-15. Until now `claim_task` rejected every

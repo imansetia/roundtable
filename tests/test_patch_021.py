@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_021_patch_release():
     with open(ROOT / "pyproject.toml", "rb") as fh:
         pyproject = tomllib.load(fh)
-    assert pyproject["project"]["version"] == "0.3.0"
-    assert roundtable.__version__ == "0.3.0"
+    assert pyproject["project"]["version"] == "0.4.0"
+    assert roundtable.__version__ == "0.4.0"
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## 0.2.1" in changelog
     assert "v0.2.1" in changelog

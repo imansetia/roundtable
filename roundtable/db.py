@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS agents (
     name TEXT PRIMARY KEY,
     role TEXT NOT NULL CHECK (role IN ('leader', 'worker')),
     skills TEXT NOT NULL DEFAULT '[]',
+    model TEXT,
     last_seen TEXT,
     active INTEGER NOT NULL DEFAULT 1
 );
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     assignee TEXT,
     result TEXT,
     review_note TEXT,
+    effort TEXT CHECK (effort IN ('low', 'medium', 'high')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS submissions (
     task_id INTEGER NOT NULL REFERENCES tasks(id),
     author TEXT NOT NULL,
     result TEXT NOT NULL,
+    model_used TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -88,7 +91,32 @@ def connect(db_path: str) -> sqlite3.Connection:
     _migrate_messages_table(conn)
     _migrate_audit_log(conn)
     _migrate_tasks_table(conn)
+    _migrate_m13_columns(conn)
     return conn
+
+
+def _migrate_m13_columns(conn: sqlite3.Connection) -> None:
+    """M13: three optional columns (Owner decision, 2026-11-15) -
+    tasks.effort (a hint for the model and reasoning level a worker
+    picks), agents.model (an information-only note from agents.json)
+    and submissions.model_used (self-reported by the submitting
+    agent; the server cannot verify it). Each ADD COLUMN is a single
+    atomic statement and runs only if the column is missing, so a
+    second start is a no-op and a crash mid-migration leaves a
+    database the next start finishes migrating. No back-fill: old
+    rows keep the new fields NULL."""
+    additions = (
+        # AUDIT-M13 N1: same CHECK as the fresh schema, so a migrated
+        # database rejects a bad effort value too (old rows are NULL).
+        ("tasks", "effort", "TEXT CHECK (effort IN ('low', 'medium', 'high'))"),
+        ("agents", "model", "TEXT"),
+        ("submissions", "model_used", "TEXT"),
+    )
+    for table, column, decl in additions:
+        columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    conn.commit()
 
 
 def _migrate_audit_log(conn: sqlite3.Connection) -> None:

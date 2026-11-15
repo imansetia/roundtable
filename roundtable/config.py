@@ -34,6 +34,10 @@ class Agent:
     role: str  # "leader" | "worker"
     skills: list[str] = field(default_factory=list)
     token: str = field(default="", repr=False)
+    # M13: an information-only note from agents.json (the model this
+    # agent runs, set by the Owner). Never used in any permission
+    # check; shown in whoami and list_agents.
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,7 +187,26 @@ def load_agents_config(path: str) -> list[Agent]:
             isinstance(s, str) for s in skills
         ):
             raise ValueError(f"agent {name!r} 'skills' must be a list of strings")
-        agents.append(Agent(name=name, role=role, skills=list(skills), token=token))
+        # M13: the optional model note. Information only - never used
+        # in any permission check.
+        model = entry.get("model")
+        if model is not None:
+            if not isinstance(model, str):
+                raise ValueError(f"agent {name!r} 'model' must be a string")
+            if len(model) > 100:
+                raise ValueError(
+                    f"agent {name!r} 'model' is {len(model)} chars; "
+                    "max 100"
+                )
+        agents.append(
+            Agent(
+                name=name,
+                role=role,
+                skills=list(skills),
+                token=token,
+                model=model,
+            )
+        )
 
     leaders = [a for a in agents if a.role == "leader"]
     if len(leaders) != 1:

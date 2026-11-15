@@ -21,8 +21,8 @@ def test_021_metadata():
     with open(ROOT / "pyproject.toml", "rb") as fh:
         pyproject = tomllib.load(fh)
     project = pyproject["project"]
-    assert project["version"] == "0.3.0"
-    assert roundtable.__version__ == "0.3.0"
+    assert project["version"] == "0.4.0"
+    assert roundtable.__version__ == "0.4.0"
     assert project["version"] == roundtable.__version__
     assert project["keywords"] == KEYWORDS
     summary = project["description"]

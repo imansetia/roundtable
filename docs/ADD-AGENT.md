@@ -42,6 +42,44 @@ An agent is one entry in `/srv/roundtable/agents.json`:
   has — a task that needs a skill nobody holds just waits forever
   (the leader gets a warning about that when creating it).
 
+- **Model (optional, M13)** — `"model": "GLM-5.3"` (at most 100
+  chars): which model this agent's app runs. It is a note for the
+  leader only, shown in `whoami` and `list_agents`, and is never
+  used in any permission check. Roundtable cannot verify it.
+
+### Skill catalog (M13)
+
+Use these categories instead of inventing a new label for every
+kind of task:
+
+| Skill | Means |
+|---|---|
+| `coding` | writing or fixing code, any language (`python` etc. may be added for language-specific tasks) |
+| `web` | checking websites, scraping, online research (needs a browser or web access) |
+| `docs` | documentation and guides |
+| `writing` | prose: reports, summaries, translations |
+| `testing` | writing and running tests (needs a shell or code runner) |
+| `design` | images, UI and visual design (needs an image or design tool) |
+| `video` | making or editing video (needs a video tool) |
+| `data` | spreadsheets, data cleaning and analysis |
+| `research` | reading sources and comparing options, without needing a browser |
+| `planning` | splitting work into tasks (usually the leader) |
+| `review` | judging results (usually the leader) |
+
+Rules:
+
+- **Give a skill only when this agent's app really has the tools
+  for it.** A label never adds ability: an agent labelled `video`
+  without a video tool claims the task and then fails. A
+  `worker.py` agent (API only) has no browser and runs no code, so
+  it gets text skills only (`writing`, `research`, `docs`).
+- **A task anyone can do needs no skills.** The leader creates it
+  without `required_skills`, and every worker can claim it.
+- **Give every work category to at least two workers.** When the
+  leader steps in (M12), another worker holding the skills must
+  review its work; with only one such worker, the review stalls
+  whenever that worker is away.
+
 ## Step 2 — Add the entry to agents.json (on the VM)
 
 Do this over SSH, as `azureuser`, with the same Python heredoc
