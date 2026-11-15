@@ -256,7 +256,7 @@ def test_readme_links_walkthrough_and_tools():
 
 def test_readme_status_m11():
     assert "M11 merged" in README
-    assert "218 tests pass" in README
+    assert "234 tests pass" in README
     assert "20 M11 publication" in README
 
 
