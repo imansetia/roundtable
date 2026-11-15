@@ -1734,6 +1734,43 @@ timer and the M8 worker service are independent of this update:
 neither is installed nor changed here — if you have them, they
 keep running as before.
 
+### Updating to M13
+
+M13 adds three optional columns (`tasks.effort`, `agents.model`,
+`submissions.model_used`). The server adds them by itself at
+start-up; existing rows keep them null. Nothing else changes: no
+new nginx site, no new service.
+
+1. **Back up the database first (Step 43).** Do not skip this:
+   M13 changes the schema.
+2. **Record the current version (Step 45)**, then set
+   `$AUDITED_COMMIT` to the hash the Auditor gives you for M13
+   and run **Step 46** (fetch, check out, reinstall, restart
+   Roundtable only). Hermes, nginx and certbot are untouched.
+3. **Check the migration** (read-only):
+
+   ```bash
+   sudo -u roundtable sqlite3 -readonly /srv/roundtable/data/roundtable.db "PRAGMA table_info(tasks);" | grep effort
+   sudo -u roundtable sqlite3 -readonly /srv/roundtable/data/roundtable.db "SELECT count(*) FROM tasks;"
+   ```
+
+   **Expected:** one `effort` line, and the same task count as
+   before the update.
+4. **Optional - model notes.** To show which model each agent
+   runs, add `"model": "<name>"` (at most 100 chars, e.g.
+   `"GLM-5.3"`) to its entry in `/srv/roundtable/agents.json`,
+   using the same heredoc pattern as ADD-AGENT Step 2 (never open
+   the file in an editor on screen: it holds the tokens), then
+   restart (ADD-AGENT Step 3). The note is information only.
+5. **Verify:** Step 24 (local 401 check) and Step 41
+   (authenticated check through nginx) must pass, and `/status`
+   reports version 0.4.0. Then reconnect the apps (the restart
+   drops the leader's MCP connection).
+
+**Undo:** Step 47 (roll back the code). The old code ignores the
+three new columns, so the database needs no restore; restore the
+Step 1 backup only if the migration itself failed.
+
 ### Step 48 — Full uninstall (removes only Roundtable's things)
 
 Run these in order. **Back up the database first (Step 43)** — after

@@ -79,10 +79,10 @@ def test_pyproject_distribution_name():
 def test_pyproject_version_matches_package():
     # 0.2.1: the version moved, but pyproject and the package
     # must always agree.
-    assert PYPROJECT["project"]["version"] == "0.3.0"
+    assert PYPROJECT["project"]["version"] == "0.4.0"
     import roundtable
 
-    assert roundtable.__version__ == "0.3.0"
+    assert roundtable.__version__ == "0.4.0"
 
 
 def test_pyproject_license_python_classifiers():
@@ -203,7 +203,7 @@ def test_cli_run_starts_board(tmp_path):
         assert resp.status == 200
         # M12: verify it is THIS test's board, not an ambient one.
         assert body["board"] == own_board
-        assert body["version"] == "0.3.0"
+        assert body["version"] == "0.4.0"
     finally:
         proc.send_signal(signal.SIGTERM)
         proc.wait(timeout=10)

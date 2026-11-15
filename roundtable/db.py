@@ -106,7 +106,9 @@ def _migrate_m13_columns(conn: sqlite3.Connection) -> None:
     database the next start finishes migrating. No back-fill: old
     rows keep the new fields NULL."""
     additions = (
-        ("tasks", "effort", "TEXT"),
+        # AUDIT-M13 N1: same CHECK as the fresh schema, so a migrated
+        # database rejects a bad effort value too (old rows are NULL).
+        ("tasks", "effort", "TEXT CHECK (effort IN ('low', 'medium', 'high'))"),
         ("agents", "model", "TEXT"),
         ("submissions", "model_used", "TEXT"),
     )

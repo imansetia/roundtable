@@ -155,7 +155,7 @@ def db_rows(db_path: Path, sql: str, params=()):
 # -- M13: task effort level (SPEC section 9) ------------------------------
 
 
-def test_37_effort_accepted_low_medium_high(tmp_path):
+def test_38_effort_accepted_low_medium_high(tmp_path):
     # effort is an optional hint: low, medium or high. Stored and
     # shown in get_task.
     tmp = tmp_path
@@ -173,7 +173,7 @@ def test_37_effort_accepted_low_medium_high(tmp_path):
         stop_server(proc)
 
 
-def test_38_effort_invalid_rejected(tmp_path):
+def test_39_effort_invalid_rejected(tmp_path):
     # Any value other than low/medium/high is a clear error; the task
     # is not created.
     tmp = tmp_path
@@ -191,7 +191,7 @@ def test_38_effort_invalid_rejected(tmp_path):
         stop_server(proc)
 
 
-def test_39_effort_omitted_stores_null(tmp_path):
+def test_40_effort_omitted_stores_null(tmp_path):
     # Leaving effort out stores NULL — a task anyone can do.
     tmp = tmp_path
     port = free_port()
@@ -205,7 +205,7 @@ def test_39_effort_omitted_stores_null(tmp_path):
         stop_server(proc)
 
 
-def test_40_effort_shown_in_list_tasks(tmp_path):
+def test_41_effort_shown_in_list_tasks(tmp_path):
     tmp = tmp_path
     port = free_port()
     proc, url, db_path = start_server(tmp, port)
@@ -297,7 +297,7 @@ INSERT INTO audit_log (time, agent, tool, task_id, outcome) VALUES
     conn.close()
 
 
-def test_41_migration_adds_three_columns_without_losing_rows(tmp_path):
+def test_42_migration_adds_three_columns_without_losing_rows(tmp_path):
     # An existing M12 database gains tasks.effort, agents.model and
     # submissions.model_used on first start — without losing rows.
     # Old rows read NULL for the new fields; enforcement still works
@@ -337,7 +337,7 @@ def test_41_migration_adds_three_columns_without_losing_rows(tmp_path):
         stop_server(proc)
 
 
-def test_42_migration_is_idempotent_second_start_noop(tmp_path):
+def test_43_migration_is_idempotent_second_start_noop(tmp_path):
     # A second start on a migrated database is a no-op: no error, no
     # duplicate migration, the data still intact.
     tmp = tmp_path
@@ -359,7 +359,7 @@ def test_42_migration_is_idempotent_second_start_noop(tmp_path):
 # -- M13: model note per agent (agents.json -> whoami/list_agents) --------
 
 
-def test_43_agent_model_invalid_type_rejected_at_startup(tmp_path):
+def test_44_agent_model_invalid_type_rejected_at_startup(tmp_path):
     # A model that is not a string is rejected at startup with a
     # clear error naming the agent.
     tmp = tmp_path
@@ -374,7 +374,7 @@ def test_43_agent_model_invalid_type_rejected_at_startup(tmp_path):
         start_server(tmp, port, agents)
 
 
-def test_44_agent_model_over_100_chars_rejected(tmp_path):
+def test_45_agent_model_over_100_chars_rejected(tmp_path):
     tmp = tmp_path
     port = free_port()
     agents = {
@@ -387,7 +387,7 @@ def test_44_agent_model_over_100_chars_rejected(tmp_path):
         start_server(tmp, port, agents)
 
 
-def test_45_agent_model_shown_in_whoami_and_list_agents(tmp_path):
+def test_46_agent_model_shown_in_whoami_and_list_agents(tmp_path):
     # A valid model is shown in whoami and list_agents; an agent
     # without a model still works (model null).
     tmp = tmp_path
@@ -418,7 +418,7 @@ def test_45_agent_model_shown_in_whoami_and_list_agents(tmp_path):
 # -- M13: model used, per submission (self-reported) ----------------------
 
 
-def test_46_model_used_stored_and_shown_as_self_reported(tmp_path):
+def test_47_model_used_stored_and_shown_as_self_reported(tmp_path):
     # submit_result gains an optional model_used: stored with the
     # submission and shown in the task's submission history, labelled
     # as self-reported.
@@ -429,9 +429,9 @@ def test_46_model_used_stored_and_shown_as_self_reported(tmp_path):
         task = make_task(url, "M13 model_used task", required_skills=["python"])
         err, _ = call(url, CODER, "claim_task", {"task_id": task["id"]})
         assert not err
-        err, _ = call(url, CODER, "submit_result",
-                      {"task_id": task["id"], "result": "done",
-                       "model_used": "GLM-5.3"})
+        err, data = call(url, CODER, "submit_result",
+                         {"task_id": task["id"], "result": "done",
+                          "model_used": "GLM-5.3"})
         assert not err, data
         err, data = call(url, LEADER, "get_task", {"task_id": task["id"]})
         assert not err, data
@@ -441,7 +441,7 @@ def test_46_model_used_stored_and_shown_as_self_reported(tmp_path):
         stop_server(proc)
 
 
-def test_47_model_used_over_100_chars_rejected(tmp_path):
+def test_48_model_used_over_100_chars_rejected(tmp_path):
     tmp = tmp_path
     port = free_port()
     proc, url, db_path = start_server(tmp, port)
@@ -461,7 +461,7 @@ def test_47_model_used_over_100_chars_rejected(tmp_path):
         stop_server(proc)
 
 
-def test_48_model_used_omitted_still_works(tmp_path):
+def test_49_model_used_omitted_still_works(tmp_path):
     tmp = tmp_path
     port = free_port()
     proc, url, db_path = start_server(tmp, port)
@@ -484,7 +484,7 @@ def test_48_model_used_omitted_still_works(tmp_path):
 # -- M13: effort and model change NO permission ---------------------------
 
 
-def test_49_effort_and_model_change_no_permissions(tmp_path):
+def test_50_effort_and_model_change_no_permissions(tmp_path):
     # Re-run the M7/M12 enforcement invariants with the new fields in
     # play: effort on the task, model on the agents — the claim and
     # review rules are identical.
@@ -517,5 +517,45 @@ def test_49_effort_and_model_change_no_permissions(tmp_path):
         assert not err, data
         assert data["task"]["status"] == "done"
         assert data["task"]["effort"] == "high"
+    finally:
+        stop_server(proc)
+
+
+# -- AUDIT-M13 notes N1 and N2 ----------------------------------------------
+
+
+def test_51_migrated_effort_column_has_the_check(tmp_path):
+    # N1: a migrated database (the VM's path) gets the same CHECK on
+    # tasks.effort as a fresh one, so a bad value is refused even by
+    # direct SQL. Old rows stay NULL, which the CHECK allows.
+    db_path = tmp_path / "roundtable.db"
+    _m12_schema_db(db_path)
+    from roundtable import db as rt_db
+
+    conn = rt_db.connect(str(db_path))
+    try:
+        assert conn.execute("SELECT effort FROM tasks").fetchone()[0] is None
+        conn.execute("UPDATE tasks SET effort = 'high' WHERE id = 1")
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("UPDATE tasks SET effort = 'banana' WHERE id = 1")
+    finally:
+        conn.close()
+
+
+def test_52_blank_model_used_is_stored_as_null(tmp_path):
+    # N2: a blank model_used means "not given" and is stored as NULL.
+    tmp = tmp_path
+    port = free_port()
+    proc, url, db_path = start_server(tmp, port)
+    try:
+        task = make_task(url, "M13 blank model_used", required_skills=["python"])
+        err, _ = call(url, CODER, "claim_task", {"task_id": task["id"]})
+        assert not err
+        err, data = call(url, CODER, "submit_result",
+                         {"task_id": task["id"], "result": "r",
+                          "model_used": "   "})
+        assert not err, data
+        rows = db_rows(db_path, "SELECT model_used FROM submissions")
+        assert rows[-1]["model_used"] is None
     finally:
         stop_server(proc)

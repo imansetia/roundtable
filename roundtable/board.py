@@ -851,6 +851,9 @@ class Board:
         # recorded for the record only and never used in any
         # permission check.
         _check_size("model_used", model_used or "", MODEL_USED_MAX)
+        # AUDIT-M13 N2: a blank note means "not given" - store NULL.
+        if model_used is not None and not model_used.strip():
+            model_used = None
         with self._lock:
             row = self._get_task_row(task_id)
             if row["status"] != "claimed":

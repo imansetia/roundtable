@@ -160,7 +160,7 @@ needed. It returns aggregates only:
 {
   "ok": true,
   "board": "Roundtable",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "tasks_by_status": {"open": 2, "claimed": 1, "submitted": 0, "done": 3, "cancelled": 0},
   "active_agents": 3,
   "server_time": "2026-11-14T04:00:00+00:00"

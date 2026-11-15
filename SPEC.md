@@ -33,17 +33,17 @@ Agents never call each other directly. They only read and write the board.
 
 ## 5. Data model
 
-**agents**: name, role (`leader` | `worker`), skills (short free text set by the Owner), last_seen.
+**agents**: name, role (`leader` | `worker`), skills (short free text set by the Owner), model (optional note set by the Owner, M13), last_seen.
 
 **tasks**: id, title, description, required_skills (a list; each at
 most 100 chars, at most 10), status, created_by, assignee, result,
-review_note, created_at, updated_at. The legacy single-skill view
+review_note, effort (`low` | `medium` | `high`, or null; M13), created_at, updated_at. The legacy single-skill view
 `required_skill` (the first required skill, or null) is returned
 alongside the list so existing clients still work.
 
 **messages**: id, task_id, author, kind (`progress` | `help_request` | `reply` | `note` | `review`), body, decision (`approved` | `rejected`, only on review messages; null otherwise), created_at.
 
-**submissions**: id, task_id, author, result, created_at. One row per
+**submissions**: id, task_id, author, result, model_used (optional, self-reported; M13), created_at. One row per
 successful `submit_result`, in order — every submission is kept, not
 only the latest. A submission is not a message: it carries a full
 result (up to 20,000 chars, vs a message's 4,000) and is written
@@ -97,6 +97,22 @@ review tasks submitted by workers: only the leader does, as
 before. The leader still cannot be a direct assignee at
 `create_task`.
 
+M13 (Owner decision, 2026-11-15): hints and records about models.
+Roundtable cannot choose or verify the model an agent runs; the
+model and its reasoning level are set in each agent's own app. So
+M13 adds three optional fields, none of which is ever read by a
+permission check (claim, review and cancel are unchanged):
+`tasks.effort` (`low`, `medium` or `high`, set by the leader at
+`create_task`: a hint for the model and reasoning level a worker
+picks; null means no particular effort), `agents.model` (a note
+from agents.json, at most 100 chars, set by the Owner, shown in
+`whoami` and `list_agents`), and `submissions.model_used` (at most
+100 chars, self-reported by the submitting agent at
+`submit_result` and not verifiable by the server; blank is stored
+as null). Existing rows keep the new fields null (no back-fill).
+docs/ADD-AGENT.md carries the skill catalog: label a skill only
+when the agent's app really has the tools for it.
+
 ### Task states
 
 ```
@@ -112,15 +128,15 @@ any non-final state -> cancelled     (leader only)
 
 | Tool | Who | What it does |
 |---|---|---|
-| `whoami` | all | Returns the caller's name, role, skills. |
-| `list_agents` | all | Names, roles, skills, last_seen. |
-| `create_task` | leader | Creates an `open` task. Optional `assignee` to assign directly (rejected if the assignee lacks a required skill). `required_skills` is a list (each at most 100 chars, at most 10); the old `required_skill` still works and means a one-item list. Warns in the result when no active worker has all the required skills. |
+| `whoami` | all | Returns the caller's name, role, skills, model note (M13). |
+| `list_agents` | all | Names, roles, skills, model notes (M13), last_seen. |
+| `create_task` | leader | Creates an `open` task. Optional `assignee` to assign directly (rejected if the assignee lacks a required skill). `required_skills` is a list (each at most 100 chars, at most 10); the old `required_skill` still works and means a one-item list. Warns in the result when no active worker has all the required skills. Optional `effort` (`low` / `medium` / `high`, M13): a hint only. |
 | `list_tasks` | all | Filter by status / assignee. `claimable_by_me=true` (workers only) lists only open tasks the caller may claim. Paginated. |
 | `get_task` | all | One task with its messages and submissions. |
 | `claim_task` | worker (leader under the leader-help rules, M12 — see section 5) | `open` -> `claimed`. Must be atomic: if two agents claim at once, exactly one succeeds. The claimant must hold every required skill. The leader may claim only when a leader-help rule holds, and the reason is recorded as a server-written note. |
 | `release_task` | assignee | `claimed` -> `open`. |
 | `post_message` | all | Adds a progress note, help request, or reply to a task. kind `review` is reserved for the server and is rejected. |
-| `submit_result` | assignee | `claimed` -> `submitted`, stores the result. Also stores a submission (every submission is kept, in order). |
+| `submit_result` | assignee | `claimed` -> `submitted`, stores the result. Also stores a submission (every submission is kept, in order). Optional `model_used` (M13): self-reported, kept for the record only. |
 | `review_task` | leader — or a peer worker under the four-eyes rule (M12, see section 5) | `submitted` -> `done`, or -> `open` with a review note. Also stores a review message (kind `review`) with the decision. When the leader submitted the result, the leader cannot review it; an eligible peer worker reviews instead. |
 | `cancel_task` | leader | Cancels a non-final task. |
 
@@ -188,6 +204,22 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 34. (M12) A worker can never review a task it submitted itself.
 35. (M12) When no eligible peer reviewer exists, the task stays submitted and list/get output says it waits for a peer reviewer.
 36. (M12) The leader-help reason is recorded in the task history as a server-written note, and the claim appears in the audit log.
+37. (M12 audit fix C1) Failed `release_task` calls (by the leader or a worker) do not count as rule (c) strikes: the leader's claim stays rejected.
+38. (M13) `create_task` accepts effort `low`, `medium` and `high`.
+39. (M13) Any other effort value is rejected with a clear error, and no task is created.
+40. (M13) An omitted effort is stored as null.
+41. (M13) Effort is shown in `get_task` and `list_tasks`.
+42. (M13) Migration of an M12 database adds `tasks.effort`, `agents.model` and `submissions.model_used` without losing rows; old rows read null.
+43. (M13) A second start on a migrated database is a no-op.
+44. (M13) An agents.json `model` that is not a string is rejected at start-up.
+45. (M13) An agents.json `model` longer than 100 chars is rejected at start-up.
+46. (M13) A valid model note is shown in `whoami` and `list_agents`; an agent without one still works.
+47. (M13) `model_used` is stored with the submission and shown in the task's submission history.
+48. (M13) `model_used` longer than 100 chars is rejected, and nothing is stored.
+49. (M13) `submit_result` without `model_used` still works.
+50. (M13) Effort and model notes change no permission: the M7/M12 claim and review rules behave exactly as before.
+51. (M13 audit N1) A migrated database enforces the same effort CHECK as a fresh one.
+52. (M13 audit N2) A blank `model_used` is stored as null.
 
 ## 10. Milestones
 
@@ -203,6 +235,7 @@ Every rule in the "Who" column is enforced on the server. A call that breaks it 
 - **M10** — Publication: self-host packaging and a read-only public status page (Owner decision, 2026-11-14). -> Auditor review.
 - **M11** — Publish as a public MCP: the package installs as roundtable-mcp 0.2.0, with a CLI, a landing-page README and CI (Owner decision, 2026-11-14). -> Auditor review.
 - **M12** — The leader may work, only when needed: leader-help claim rules and the four-eyes review rule (Owner decision, 2026-11-15). -> Auditor review.
+- **M13** — Effort levels, model notes, self-reported model per submission, and a skill catalog; hints and records only, no permission change (Owner decision, 2026-11-15). -> Auditor review.
 - **0.2.1** — Patch release: republish roundtable-mcp 0.2.1 with the merged README (the 0.2.0 PyPI long description was built from the pre-R1 tree). -> Auditor review.
 
 Do not start a milestone before the previous one has passed review.

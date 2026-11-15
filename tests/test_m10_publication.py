@@ -233,7 +233,7 @@ def test_status_returns_aggregates_only(tmp_path):
         body = resp.json()
         assert body["ok"] is True
         assert body["board"] == "Roundtable"
-        assert body["version"] == "0.3.0"
+        assert body["version"] == "0.4.0"
         assert body["tasks_by_status"] == {
             "open": 1,
             "claimed": 1,
